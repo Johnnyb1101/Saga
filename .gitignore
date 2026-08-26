@@ -1,0 +1,24 @@
+# Database and generated data — never committed
+data/
+exports/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Private working context — public repo, personal specifics stay local
+CLAUDE.md
+*.local.md
+ROADMAP.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
