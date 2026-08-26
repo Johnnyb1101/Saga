@@ -39,7 +39,7 @@ In development. Sections marked *planned* describe the intended interface,
 not working code.
 
 - [x] Project foundation
-- [ ] Schema and database layer
+- [x] Schema and database layer
 - [ ] Write path — tasks, projects, completions
 - [ ] Read path — today, upcoming, overdue
 - [ ] Analytics and review roll-up
