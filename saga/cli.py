@@ -11,19 +11,21 @@ import sys
 from pathlib import Path
 from saga import analytics, db, export, reads, writes
 
-
 def days_between(iso_date):
     """Whole days from `iso_date` until today. Positive means in the past."""
     return (dt.date.today() - dt.date.fromisoformat(iso_date)).days
 
-
-def print_tasks(rows, show_due=False):
-    """One line per task: id, category, optional age, title."""
+def print_tasks(rows, mode=None):
+    """One line per task: id, category, an optional date column, title."""
     for row in rows:
-        age = ""
-        if show_due and row["due_date"]:
-            age = f"{days_between(row['due_date']):>3}d late "
-        print(f"  {row['id']:>4}  {row['category']:<9}{age}{row['title']}")
+        extra = ""
+        if row["due_date"] and mode == "late":
+            extra = f"{days_between(row['due_date']):>3}d late  "
+        elif row["due_date"] and mode == "soon":
+            extra = f"{-days_between(row['due_date']):>3}d       "
+        elif mode == "date":
+            extra = f"{row['due_date'] or '':<12}"
+        print(f"  {row['id']:>4}  {row['category']:<9}{extra}{row['title']}")
 
 CONSTRAINT_HELP = {
     "date(": "dates must be YYYY-MM-DD with zero padding, e.g. 2026-09-04",
@@ -31,7 +33,6 @@ CONSTRAINT_HELP = {
     "FOREIGN KEY": "no such category, project, or measure",
     "(measure is NULL)": "a measure and a quantity must be given together",
 }
-
 
 def explain(exc):
     """Turn a constraint error into something a person can act on."""
@@ -41,20 +42,17 @@ def explain(exc):
             return f"{hint}  ({text})"
     return text
 
-
 def require_terminal():
     """Refuse to prompt when there is nothing attached to answer."""
     if not sys.stdin.isatty():
         raise ValueError("missing arguments and no terminal to prompt on; "
                          "supply them as flags instead")
 
-
 def ask(question, default=None):
     """Prompt for a value. Blank input returns the default."""
     require_terminal()
     suffix = f" [{default}]" if default else ""
     return input(f"{question}{suffix}: ").strip() or default
-
 
 def ask_choice(question, options):
     """Prompt for one of `options`, chosen by number."""
@@ -67,7 +65,6 @@ def ask_choice(question, options):
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return options[int(raw) - 1]
         print("  Enter a number from the list.")
-
 
 def cmd_add(args):
     con = db.connect(args.db)
@@ -87,7 +84,6 @@ def cmd_add(args):
     print(f"Added task {task_id}: {text}")
     maybe_export(args, con)
 
-
 def cmd_project(args):
     con = db.connect(args.db)
     guided = args.name is None
@@ -102,14 +98,12 @@ def cmd_project(args):
     print(f"Added project {project_id}: {name}")
     maybe_export(args, con)
 
-
 def ask_yes_no(question, default=False):
     """Prompt for yes or no. Blank input returns the default."""
     answer = ask(f"{question} ({'Y/n' if default else 'y/N'})")
     if answer is None:
         return default
     return answer.lower().startswith("y")
-
 
 def ask_measure(con):
     """Prompt for a measure and quantity. Returns (measure, quantity)."""
@@ -132,7 +126,6 @@ def ask_measure(con):
             return choice, float(raw)
         except ValueError:
             print("  Enter a number.")
-
 
 def cmd_done(args):
     con = db.connect(args.db)
@@ -163,18 +156,15 @@ def cmd_done(args):
     print(f"Logged completion {completion_id}.")
     maybe_export(args, con)
 
-
 def fmt_number(value):
     """Render a quantity: no trailing .0 when whole, thousands separated."""
     if value == int(value):
         return f"{int(value):,}"
     return f"{value:,}"
 
-
 def plural(count, word):
     """`word`, pluralised for `count`."""
     return word if count == 1 else word + "s"
-
 
 def cmd_review(args):
     con = db.connect(args.db)
@@ -226,13 +216,11 @@ def cmd_review(args):
             detail = f"   [{row['measure']}: {fmt_number(row['quantity'])}]"
         print(f"  {row['completed_at'][:10]}  {row['outcome']}{detail}")
 
-
 def maybe_export(args, con):
     """Regenerate exports, but only when working on the real database."""
     if Path(args.db).resolve() != db.DB_PATH.resolve():
         return
     export.write_all(con)
-
 
 def cmd_export(args):
     con = db.connect(args.db)
@@ -240,27 +228,38 @@ def cmd_export(args):
                                  since=args.since, until=args.until):
         print(f"Wrote {path}")
 
-
 def cmd_init(args):
     print(f"Created {db.init_db(args.db)}")
-
 
 def cmd_today(args):
     con = db.connect(args.db)
     late = reads.overdue(con)
     due = reads.due_today(con)
+    soon = reads.due_soon(con, days=args.days)
 
     if late:
         print("OVERDUE")
-        print_tasks(late, show_due=True)
+        print_tasks(late, mode="late")
         print()
     if due:
         print("DUE TODAY")
         print_tasks(due)
         print()
-    if not late and not due:
-        print("Nothing due today.")
+    if soon:
+        print(f"COMING UP ({args.days} DAYS)")
+        print_tasks(soon, mode="soon")
+        print()
+    if not (late or due or soon):
+        print(f"Nothing due in the next {args.days} days.")
 
+def cmd_list(args):
+    con = db.connect(args.db)
+    rows = reads.open_tasks(con, category=args.category)
+    if not rows:
+        print("No open tasks.")
+        return
+    print(f"OPEN TASKS ({len(rows)})")
+    print_tasks(rows, mode="date")
 
 def cmd_upcoming(args):
     con = db.connect(args.db)
@@ -273,7 +272,6 @@ def cmd_upcoming(args):
         print(f"  {row['days_left']:>4}d  {row['deadline']}  "
               f"{row['name']:<38}{row['open_tasks']} open")
 
-
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="saga",
@@ -285,9 +283,17 @@ def build_parser():
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
-    p = sub.add_parser("today", help="tasks due today, plus anything overdue",
-                       description="Open tasks due today, and anything already past due.")
+    p = sub.add_parser("today", help="due today, overdue, and coming up",
+                       description="Anything past due, due today, or due within "
+                                   "the next few days.")
+    p.add_argument("--days", type=int, default=7, metavar="N",
+                   help="how far ahead 'coming up' looks (default: 7)")
     p.set_defaults(func=cmd_today)
+
+    p = sub.add_parser("list", help="every open task, with ids",
+                       description="All open tasks, soonest due first, undated last.")
+    p.add_argument("-c", "--category", help="only this category")
+    p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("add", help="add a task",
                        description="Add a task. Run it bare to be prompted for everything.")

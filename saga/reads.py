@@ -85,3 +85,17 @@ def categories(con):
 def measures(con):
     """All registered measure names."""
     return con.execute("SELECT name FROM measures ORDER BY name").fetchall()
+
+def due_soon(con, days=7, on=None):
+    """Open tasks due after today but within `days`."""
+    return con.execute(
+        """
+        SELECT * FROM tasks
+        WHERE status = 'open'
+          AND due_date > COALESCE(?, date('now', 'localtime'))
+          AND due_date <= date(COALESCE(?, date('now', 'localtime')),
+                               '+' || ? || ' days')
+        ORDER BY due_date, id
+        """,
+        (on, on, days),
+    ).fetchall()
