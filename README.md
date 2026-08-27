@@ -31,39 +31,103 @@ questions are aggregate ones — cheap in SQL, miserable anywhere else.
 - On-time completion rate by category.
 - Total volume per program across a review period.
 
-*Sample output added here once the query layer is built.*
+Run against the bundled demo data:
+
+```
+$ python main.py --db data/demo.db review
+
+REVIEW PERIOD  the beginning to today
+
+VOLUME
+       61 completions
+       53 in review-counting categories
+        9 flagged as review material
+       26 recorded a number
+
+MEASURES
+  packages reviewed                     226   across 10 occasions
+  hours saved                            23   across 3 occasions
+  personnel onboarded                    22   across 3 occasions
+  inspections passed                     10   across 10 occasions
+
+BY CATEGORY
+  work         24 completions    83.3% on time
+  certs        11 completions    77.8% on time
+  school       10 completions    77.8% on time
+  home          8 completions    75.0% on time
+  personal      8 completions    75.0% on time
+
+FLAGGED - work
+  2025-08-12  Ran the spring onboarding cycle   [personnel onboarded: 6]
+  2025-10-31  Ran the summer onboarding cycle   [personnel onboarded: 9]
+  2025-12-30  Automated the weekly roll-up   [hours saved: 12]
+  2026-03-30  Ran the autumn onboarding cycle   [personnel onboarded: 7]
+  2026-06-18  Automated the inventory export   [hours saved: 8]
+  2026-08-22  Fixed the early-morning outage   [hours saved: 3]
+```
+
+Every figure there is summed from records. All of it is invented demo data —
+no real entry has ever been in this repository.
 
 ## Status
 
-In development. Sections marked *planned* describe the intended interface,
-not working code.
+Working end to end.
 
 - [x] Project foundation
 - [x] Schema and database layer
 - [x] Write path — tasks, projects, completions
 - [x] Read path — today, upcoming, overdue
 - [x] Analytics and review roll-up
-- [ ] Command-line interface
-- [ ] Export for external consumers
+- [x] Command-line interface
+- [x] Export for external consumers
+
+Not built yet: recurring tasks, and a backup command using SQLite's own
+backup API.
 
 ## Requirements
 
-Python 3.11 or later. Nothing else — `sqlite3` ships with the standard
-library.
+Python 3.14 with SQLite 3.37 or later, which is what ships with it. No
+third-party packages — `sqlite3` is in the standard library.
 
-## Usage *(planned)*
+The SQLite floor is real: every table is declared `STRICT`, which arrived
+in 3.37. Check yours with:
+
+    python -c "import sqlite3; print(sqlite3.sqlite_version)"
+
+## Usage
 
 ```
-python main.py init                     # create the database
-python main.py add "text" --due DATE --category NAME [--project ID]
-python main.py project "name" --deadline DATE
-python main.py done ID --outcome "..." --measure NAME --quantity N [--flag]
-python main.py today                    # tasks due today, plus overdue
-python main.py upcoming [--days 30]     # deadlines approaching
-python main.py review [--since DATE]    # flagged accomplishments, grouped
-python main.py export                   # regenerate exports/
+python main.py                          # list every command
+python main.py <command> --help         # details for one
+
+python main.py init                     # create the database (first run only)
+
+python main.py today                    # due today, plus anything overdue
+python main.py add "text" [-c NAME] [--due DATE] [--project ID]
+python main.py done ID [--outcome "..."] [--measure NAME] [--quantity N] [--flag]
+python main.py upcoming [--days 30]     # project deadlines approaching
+python main.py project "name" [--deadline DATE]
+python main.py review [--since DATE] [--until DATE]
+python main.py export [--out DIR]       # regenerate exports/
+
+python main.py --db PATH <command>      # run against a different database
 ```
 
+`add`, `project`, and `done` prompt for anything you leave off, so
+`python main.py done 12` walks you through it. Supply the flags and it never
+asks — which keeps the commands usable from a scheduled task, where there is
+nobody to answer.
+
+## Try it
+
+```
+python seed_demo.py
+python main.py --db data/demo.db today
+python main.py --db data/demo.db review
+```
+
+`seed_demo.py` builds `data/demo.db` from invented data, through the same
+write functions the CLI uses. Your own database is never touched.
 
 ## Design notes
 
