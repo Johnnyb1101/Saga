@@ -71,3 +71,17 @@ def upcoming_deadlines(con, days=30, on=None):
         """,
         (on, on, days),
     ).fetchall()
+
+def categories(con):
+    """All category names, the review-counting ones first."""
+    return con.execute(
+        """
+        SELECT name, counts_toward_review
+        FROM categories
+        ORDER BY counts_toward_review DESC, name
+        """
+    ).fetchall()
+
+def measures(con):
+    """All registered measure names."""
+    return con.execute("SELECT name FROM measures ORDER BY name").fetchall()
