@@ -16,6 +16,7 @@ SCHEMA_PATH = HERE / "schema.sql"
 
 def connect(db_path=DB_PATH):
     """Open a connection to an existing database."""
+    db_path = Path(db_path)
     if not db_path.exists():
         raise FileNotFoundError(
             f"No database at {db_path}. Run 'python main.py init' first."
@@ -28,6 +29,7 @@ def connect(db_path=DB_PATH):
 
 def init_db(db_path=DB_PATH):
     """Create a new database from schema.sql. Refuses to touch an existing one."""
+    db_path = Path(db_path)
     if db_path.exists():
         raise FileExistsError(
             f"Database already exists at {db_path}. Delete it by hand if you "
