@@ -42,7 +42,7 @@ not working code.
 - [x] Schema and database layer
 - [x] Write path — tasks, projects, completions
 - [x] Read path — today, upcoming, overdue
-- [ ] Analytics and review roll-up
+- [x] Analytics and review roll-up
 - [ ] Command-line interface
 - [ ] Export for external consumers
 
