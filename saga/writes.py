@@ -6,7 +6,6 @@ caller decides what belongs in a single transaction.
 All SQL uses ? placeholders. Values are never formatted into a statement.
 """
 
-
 def add_project(con, name, description=None, start_date=None, deadline=None):
     """Insert a project. Returns its new id."""
     with con:
@@ -19,7 +18,6 @@ def add_project(con, name, description=None, start_date=None, deadline=None):
         )
     return cur.lastrowid
 
-
 def add_task(con, title, category, project_id=None, due_date=None):
     """Insert a task. Returns its new id."""
     with con:
@@ -30,4 +28,48 @@ def add_task(con, title, category, project_id=None, due_date=None):
             """,
             (title, category, project_id, due_date),
         )
+    return cur.lastrowid
+
+def add_measure(con, name):
+    """Register a measure so quantities can be recorded against it."""
+    with con:
+        con.execute("INSERT INTO measures (name) VALUES (?)", (name,))
+    return name
+
+def _insert_completion(con, task_id, category, outcome, measure, quantity,
+                       flagged, completed_at):
+    """Shared INSERT for both completion paths. The caller owns the transaction."""
+    return con.execute(
+        """
+        INSERT INTO completions
+            (task_id, category, completed_at, outcome, measure, quantity, flagged)
+        VALUES (?, ?, COALESCE(?, datetime('now', 'localtime')), ?, ?, ?, ?)
+        """,
+        (task_id, category, completed_at, outcome, measure, quantity, int(flagged)),
+    )
+
+def add_completion(con, category, outcome=None, measure=None, quantity=None,
+                   flagged=False, completed_at=None):
+    """Archive work that was never a task. Returns the completion id."""
+    with con:
+        cur = _insert_completion(con, None, category, outcome, measure,
+                                 quantity, flagged, completed_at)
+    return cur.lastrowid
+
+def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
+                  flagged=False, completed_at=None):
+    """Archive a completion and close the task. Returns the completion id."""
+    task = con.execute(
+        "SELECT status, category FROM tasks WHERE id = ?", (task_id,)
+    ).fetchone()
+
+    if task is None:
+        raise ValueError(f"No task with id {task_id}.")
+    if task["status"] != "open":
+        raise ValueError(f"Task {task_id} is already {task['status']}.")
+
+    with con:
+        cur = _insert_completion(con, task_id, task["category"], outcome,
+                                 measure, quantity, flagged, completed_at)
+        con.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (task_id,))
     return cur.lastrowid

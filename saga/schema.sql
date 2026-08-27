@@ -7,7 +7,6 @@
 -- key target when the table is created; it resolves it on first insert.
 -- Parents come first so that failure never happens.
 
-
 -- ---------------------------------------------------------------------
 -- categories
 -- Reference data. Small, fixed, and required before any task can exist.
@@ -25,6 +24,15 @@ INSERT INTO categories (name, counts_toward_review) VALUES
     ('personal', 1),
     ('home',     0);
 
+-- ---------------------------------------------------------------------
+-- measures
+-- Named units of countable work. A measure is registered once, then
+-- quantities recorded against it in completions sum cleanly.
+-- Deliberately not seeded: measure names describe real duties.
+-- ---------------------------------------------------------------------
+CREATE TABLE measures (
+    name TEXT PRIMARY KEY
+) STRICT;
 
 -- ---------------------------------------------------------------------
 -- projects
@@ -40,7 +48,6 @@ CREATE TABLE projects (
                             CHECK (status IN ('active', 'on_hold', 'done', 'cancelled')),
     created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 ) STRICT;
-
 
 -- ---------------------------------------------------------------------
 -- tasks
@@ -59,7 +66,6 @@ CREATE TABLE tasks (
     created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 ) STRICT;
 
-
 -- ---------------------------------------------------------------------
 -- completions
 -- The permanent archive. Append-only: never edited, never deleted.
@@ -73,7 +79,10 @@ CREATE TABLE completions (
     completed_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
                              CHECK (datetime(completed_at) IS completed_at),
     outcome      TEXT,
-    metric       TEXT,
+    measure      TEXT    REFERENCES measures(name) ON UPDATE CASCADE,
+    quantity     REAL,
     flagged      INTEGER NOT NULL DEFAULT 0
-                             CHECK (flagged IN (0, 1))
+                             CHECK (flagged IN (0, 1)),
+
+    CHECK ((measure IS NULL) = (quantity IS NULL))
 ) STRICT;

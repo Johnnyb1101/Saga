@@ -57,7 +57,7 @@ library.
 python main.py init                     # create the database
 python main.py add "text" --due DATE --category NAME [--project ID]
 python main.py project "name" --deadline DATE
-python main.py done ID --outcome "..." --metric "..." [--flag]
+python main.py done ID --outcome "..." --measure NAME --quantity N [--flag]
 python main.py today                    # tasks due today, plus overdue
 python main.py upcoming [--days 30]     # deadlines approaching
 python main.py review [--since DATE]    # flagged accomplishments, grouped
