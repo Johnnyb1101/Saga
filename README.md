@@ -40,7 +40,7 @@ not working code.
 
 - [x] Project foundation
 - [x] Schema and database layer
-- [ ] Write path — tasks, projects, completions
+- [x] Write path — tasks, projects, completions
 - [ ] Read path — today, upcoming, overdue
 - [ ] Analytics and review roll-up
 - [ ] Command-line interface
