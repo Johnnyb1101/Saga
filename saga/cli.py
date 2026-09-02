@@ -120,9 +120,7 @@ def ask_measure(con):
         writes.add_measure(con, choice)
 
     while True:
-        raw = ask("Quantity (blank to skip the measure)")
-        if raw is None:
-            return None, None
+        raw = ask("Quantity", default="1")
         try:
             return choice, float(raw)
         except ValueError:
