@@ -86,6 +86,24 @@ def measures(con):
     """All registered measure names."""
     return con.execute("SELECT name FROM measures ORDER BY name").fetchall()
 
+def measure_usage(con):
+    """Every registered measure with how often it has been recorded.
+
+    LEFT JOIN, so a measure nothing has ever been logged against still
+    appears, with a zero. Those are the ones worth noticing.
+    """
+    return con.execute(
+        """
+        SELECT m.name,
+               count(c.id)     AS occasions,
+               sum(c.quantity) AS total
+        FROM measures m
+        LEFT JOIN completions c ON c.measure = m.name
+        GROUP BY m.name
+        ORDER BY occasions DESC, m.name
+        """
+    ).fetchall()
+
 def due_soon(con, days=7, on=None):
     """Open tasks due after today but within `days`."""
     return con.execute(

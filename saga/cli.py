@@ -32,6 +32,7 @@ CONSTRAINT_HELP = {
     "datetime(": "timestamps must be YYYY-MM-DD HH:MM:SS",
     "FOREIGN KEY": "no such category, project, or measure",
     "(measure is NULL)": "a measure and a quantity must be given together",
+    "measures.name": "that measure is already registered",
 }
 
 def explain(exc):
@@ -165,6 +166,28 @@ def fmt_number(value):
 def plural(count, word):
     """`word`, pluralised for `count`."""
     return word if count == 1 else word + "s"
+
+def cmd_measure(args):
+    con = db.connect(args.db)
+
+    if args.name:
+        writes.add_measure(con, args.name)
+        print(f"Registered {args.name}.")
+        return
+
+    rows = reads.measure_usage(con)
+    if not rows:
+        print('No measures registered. Add one with: saga measure "NAME"')
+        return
+
+    print(f"MEASURES ({len(rows)})")
+    for row in rows:
+        if row["occasions"] == 0:
+            print(f"  {row['name']:<34}{'-':>7}   never used")
+            continue
+        print(f"  {row['name']:<34}{fmt_number(row['total']):>7}"
+              f"   across {row['occasions']} "
+              f"{plural(row['occasions'], 'occasion')}")
 
 def cmd_review(args):
     con = db.connect(args.db)
@@ -339,6 +362,13 @@ def build_parser():
     p.add_argument("--start", metavar="DATE", help="start date, YYYY-MM-DD")
     p.add_argument("--description", help="longer description")
     p.set_defaults(func=cmd_project)
+
+    p = sub.add_parser("measure", help="list or register measures",
+                       description="Run it bare to see every registered measure "
+                                   "and how often it has been used. Give it a name "
+                                   "to register a new one.")
+    p.add_argument("name", nargs="?", help="name of a new measure to register")
+    p.set_defaults(func=cmd_measure)
 
     p = sub.add_parser("review", help="totals and flagged work for a period",
                        description="Summarise the archive: volume, measure totals, "

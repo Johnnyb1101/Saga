@@ -103,10 +103,12 @@ python main.py <command> --help         # details for one
 python main.py init                     # create the database (first run only)
 
 python main.py today                    # due today, plus anything overdue
+python main.py list [-c NAME]           # every open task, with ids
 python main.py add "text" [-c NAME] [--due DATE] [--project ID]
 python main.py done ID [--outcome "..."] [--measure NAME] [--quantity N] [--flag]
 python main.py upcoming [--days 30]     # project deadlines approaching
 python main.py project "name" [--deadline DATE]
+python main.py measure ["NAME"]         # list measures, or register one
 python main.py review [--since DATE] [--until DATE]
 python main.py export [--out DIR]       # regenerate exports/
 
@@ -160,6 +162,15 @@ unrecoverable state. The database stays on local disk; a generated
 External consumers read `exports/brief.json`, which carries a version
 field. The schema can change without breaking anything downstream, and the
 consumer never needs to know SQL.
+
+**A stale export is indistinguishable from a quiet day.**
+`exports/` regenerated after every write, which is not often enough. A
+date passing is not a write, so a stretch with nothing completed left the
+brief on disk still answering with an older date — reporting tasks as due
+today that were already a day overdue. Every command now compares the
+`date` field inside `brief.json` against today and regenerates first if
+they differ. Modification time would have been the easier check and the
+wrong one: sync clients rewrite it.
 
 ## Data handling
 
