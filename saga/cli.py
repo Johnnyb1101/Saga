@@ -298,8 +298,8 @@ def build_parser():
     p = sub.add_parser("today", help="due today, overdue, and coming up",
                        description="Anything past due, due today, or due within "
                                    "the next few days.")
-    p.add_argument("--days", type=int, default=7, metavar="N",
-                   help="how far ahead 'coming up' looks (default: 7)")
+    p.add_argument("--days", type=int, default=export.SOON_DAYS, metavar="N",
+                   help=f"how far ahead 'coming up' looks (default: {export.SOON_DAYS})")
     p.set_defaults(func=cmd_today)
 
     p = sub.add_parser("list", help="every open task, with ids",
@@ -328,8 +328,8 @@ def build_parser():
     p = sub.add_parser("upcoming", help="project deadlines approaching",
                        description="Active projects with a deadline inside the window, "
                                    "and how many of their tasks are still open.")
-    p.add_argument("--days", type=int, default=export.SOON_DAYS, metavar="N",
-                   help=f"how far ahead 'coming up' looks (default: {export.SOON_DAYS})")
+    p.add_argument("--days", type=int, default=export.DEADLINE_DAYS, metavar="N",
+                   help=f"how far ahead to look (default: {export.DEADLINE_DAYS})")
     p.set_defaults(func=cmd_upcoming)
 
     p = sub.add_parser("project", help="add a project",

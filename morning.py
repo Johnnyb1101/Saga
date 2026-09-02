@@ -1,9 +1,11 @@
 """The morning brief: what is due today, and what is coming.
 
-Task Scheduler runs this once a day, and again at logon in case the machine
-was off when the daily fired. It prints the same views `today` and
-`upcoming` give; exports/ refreshes itself on the way through, because
-cli.main brings a stale brief forward before it dispatches.
+Task Scheduler runs this daily at 06:00 as "Saga Morning Brief". A run
+missed while the machine was off fires when it comes back, so the window
+appears once a day whether or not the machine was on at six. It prints the
+same views `today` and `upcoming` give; exports/ refreshes itself on the
+way through, because cli.main brings a stale brief forward before it
+dispatches.
 
 Every run is logged. A scheduled task that has quietly stopped running looks
 exactly like a quiet day with nothing due, and the log is what tells them
