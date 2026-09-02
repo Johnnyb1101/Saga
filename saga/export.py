@@ -12,6 +12,8 @@ from saga import analytics, db, reads
 
 SCHEMA_VERSION = 1
 EXPORT_DIR = db.ROOT / "exports"
+SOON_DAYS = 14
+DEADLINE_DAYS = 30
 
 
 def as_dicts(rows):
@@ -23,7 +25,7 @@ def now():
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def build_brief(con, soon_days=7, deadline_days=30):
+def build_brief(con, soon_days=SOON_DAYS, deadline_days=DEADLINE_DAYS):
     """The daily view: what is late, what is due, what is coming."""
     return {
         "schema_version": SCHEMA_VERSION,
@@ -108,3 +110,12 @@ def write_all(con, out_dir=EXPORT_DIR, since=None, until=None):
         path.write_text(content, encoding="utf-8")
         written.append(path)
     return written
+
+
+def is_stale(out_dir=EXPORT_DIR):
+    """True when brief.json is missing, unreadable, or not from today."""
+    try:
+        brief = json.loads((out_dir / "brief.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return brief.get("date") != dt.date.today().isoformat()

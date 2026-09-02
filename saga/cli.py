@@ -216,6 +216,17 @@ def cmd_review(args):
             detail = f"   [{row['measure']}: {fmt_number(row['quantity'])}]"
         print(f"  {row['completed_at'][:10]}  {row['outcome']}{detail}")
 
+def refresh_if_stale(args):
+    """Bring exports/ forward when they are not from today.
+
+    A date passing is not a write, so maybe_export never fires on a quiet
+    day and the brief on disk keeps answering with yesterday's date.
+    """
+    if Path(args.db).resolve() != db.DB_PATH.resolve():
+        return
+    if export.is_stale():
+        export.write_all(db.connect(args.db))
+
 def maybe_export(args, con):
     """Regenerate exports, but only when working on the real database."""
     if Path(args.db).resolve() != db.DB_PATH.resolve():
@@ -277,6 +288,7 @@ def build_parser():
         prog="saga",
         description="Personal operations database.",
     )
+    parser.set_defaults(refresh=True)
     parser.add_argument(
         "--db", type=Path, default=db.DB_PATH, metavar="PATH",
         help="database file to use (default: data/saga.db)",
@@ -316,8 +328,8 @@ def build_parser():
     p = sub.add_parser("upcoming", help="project deadlines approaching",
                        description="Active projects with a deadline inside the window, "
                                    "and how many of their tasks are still open.")
-    p.add_argument("--days", type=int, default=30, metavar="N",
-                   help="how far ahead to look (default: 30)")
+    p.add_argument("--days", type=int, default=export.SOON_DAYS, metavar="N",
+                   help=f"how far ahead 'coming up' looks (default: {export.SOON_DAYS})")
     p.set_defaults(func=cmd_upcoming)
 
     p = sub.add_parser("project", help="add a project",
@@ -343,11 +355,11 @@ def build_parser():
                    help="where to write (default: exports/)")
     p.add_argument("--since", metavar="DATE", help="review period start, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="review period end, YYYY-MM-DD")
-    p.set_defaults(func=cmd_export)
+    p.set_defaults(func=cmd_export, refresh=False)
 
     p = sub.add_parser("init", help="create the database (first run only)",
                        description="Create a new database. Refuses if one already exists.")
-    p.set_defaults(func=cmd_init)
+    p.set_defaults(func=cmd_init, refresh=False)
 
     return parser
 
@@ -361,6 +373,8 @@ def main(argv=None):
         return 1
 
     try:
+        if args.refresh:
+            refresh_if_stale(args)
         args.func(args)
     except (FileNotFoundError, FileExistsError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
