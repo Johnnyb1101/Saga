@@ -35,6 +35,7 @@ CONSTRAINT_HELP = {
     "FOREIGN KEY": "no such category, project, or measure",
     "(measure is NULL)": "a measure and a quantity must be given together",
     "measures.name": "that measure is already registered",
+    "duties.name": "that duty is already registered",
 }
 
 def explain(exc):
@@ -128,6 +129,14 @@ def ask_measure(con):
         except ValueError:
             print("  Enter a number.")
 
+def ask_duty(con):
+    """Prompt for a duty. Returns None when none are registered."""
+    names = [row["name"] for row in reads.duties(con)]
+    if not names:
+        return None
+    choice = ask_choice("Duty", names + ["(none)"])
+    return None if choice == "(none)" else choice
+
 def cmd_done(args):
     con = db.connect(args.db)
     task = reads.get_task(con, args.task_id)
@@ -145,15 +154,18 @@ def cmd_done(args):
     measure = args.measure
     quantity = args.quantity
     flagged = args.flag
+    duty = args.duty
 
     if guided:
         outcome = ask("Outcome")
         measure, quantity = ask_measure(con)
+        if duty is None and task["duty"] is None:
+            duty = ask_duty(con)
         flagged = ask_yes_no("Review material?")
 
     completion_id = writes.complete_task(
         con, task["id"], outcome=outcome, measure=measure,
-        quantity=quantity, flagged=flagged)
+        quantity=quantity, flagged=flagged, duty=duty)
     print(f"Logged completion {completion_id}.")
     maybe_export(args, con)
 
@@ -188,6 +200,28 @@ def cmd_measure(args):
         print(f"  {row['name']:<34}{fmt_number(row['total']):>7}"
               f"   across {row['occasions']} "
               f"{plural(row['occasions'], 'occasion')}")
+
+
+def cmd_duty(args):
+    con = db.connect(args.db)
+
+    if args.name:
+        writes.add_duty(con, args.name)
+        print(f"Registered {args.name}.")
+        return
+
+    rows = reads.duty_usage(con)
+    if not rows:
+        print('No duties registered. Add one with: saga duty "NAME"')
+        return
+
+    print(f"DUTIES ({len(rows)})")
+    for row in rows:
+        if row["completions"] == 0:
+            print(f"  {row['name']:<34}{'-':>7}   never used")
+            continue
+        print(f"  {row['name']:<34}{row['completions']:>7,}   "
+              f"{plural(row['completions'], 'completion')}")
 
 def cmd_review(args):
     con = db.connect(args.db)
@@ -348,6 +382,7 @@ def build_parser():
     p.add_argument("task_id", type=int, metavar="ID", help="task id (from `today`)")
     p.add_argument("--outcome", help="what happened")
     p.add_argument("--measure", metavar="NAME", help="a registered measure")
+    p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--quantity", type=float, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
     p.set_defaults(func=cmd_done)
@@ -373,6 +408,13 @@ def build_parser():
                                    "to register a new one.")
     p.add_argument("name", nargs="?", help="name of a new measure to register")
     p.set_defaults(func=cmd_measure)
+
+    p = sub.add_parser("duty", help="list or register duties",
+                       description="Run it bare to see every registered duty and "
+                                   "how much work is filed under it. Give it a name "
+                                   "to register a new one.")
+    p.add_argument("name", nargs="?", help="name of a new duty to register")
+    p.set_defaults(func=cmd_duty)
 
     p = sub.add_parser("review", help="totals and flagged work for a period",
                        description="Summarise the archive: volume, measure totals, "

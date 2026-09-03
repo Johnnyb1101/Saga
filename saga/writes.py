@@ -36,31 +36,39 @@ def add_measure(con, name):
         con.execute("INSERT INTO measures (name) VALUES (?)", (name,))
     return name
 
+def add_duty(con, name):
+    """Register a duty so tasks and completions can be filed under it."""
+    with con:
+        con.execute("INSERT INTO duties (name) VALUES (?)", (name,))
+    return name
+
 def _insert_completion(con, task_id, category, outcome, measure, quantity,
-                       flagged, completed_at):
+                       flagged, completed_at, duty):
     """Shared INSERT for both completion paths. The caller owns the transaction."""
     return con.execute(
         """
         INSERT INTO completions
-            (task_id, category, completed_at, outcome, measure, quantity, flagged)
-        VALUES (?, ?, COALESCE(?, datetime('now', 'localtime')), ?, ?, ?, ?)
+            (task_id, category, completed_at, outcome, measure, quantity,
+             flagged, duty)
+        VALUES (?, ?, COALESCE(?, datetime('now', 'localtime')), ?, ?, ?, ?, ?)
         """,
-        (task_id, category, completed_at, outcome, measure, quantity, int(flagged)),
+        (task_id, category, completed_at, outcome, measure, quantity,
+         int(flagged), duty),
     )
 
 def add_completion(con, category, outcome=None, measure=None, quantity=None,
-                   flagged=False, completed_at=None):
+                   flagged=False, completed_at=None, duty=None):
     """Archive work that was never a task. Returns the completion id."""
     with con:
         cur = _insert_completion(con, None, category, outcome, measure,
-                                 quantity, flagged, completed_at)
+                                 quantity, flagged, completed_at, duty)
     return cur.lastrowid
 
 def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
-                  flagged=False, completed_at=None):
+                  flagged=False, completed_at=None, duty=None):
     """Archive a completion and close the task. Returns the completion id."""
     task = con.execute(
-        "SELECT status, category FROM tasks WHERE id = ?", (task_id,)
+        "SELECT status, category, duty FROM tasks WHERE id = ?", (task_id,)
     ).fetchone()
 
     if task is None:
@@ -70,6 +78,7 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
 
     with con:
         cur = _insert_completion(con, task_id, task["category"], outcome,
-                                 measure, quantity, flagged, completed_at)
+                                 measure, quantity, flagged, completed_at,
+                                 task["duty"] if duty is None else duty)
         con.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (task_id,))
     return cur.lastrowid

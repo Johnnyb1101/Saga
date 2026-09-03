@@ -104,6 +104,30 @@ def measure_usage(con):
         """
     ).fetchall()
 
+
+def duties(con):
+    """All registered duty names."""
+    return con.execute("SELECT name FROM duties ORDER BY name").fetchall()
+
+
+def duty_usage(con):
+    """Every registered duty with how many completions carry it.
+
+    LEFT JOIN, so a duty nothing has been logged against still appears
+    with a zero.
+    """
+    return con.execute(
+        """
+        SELECT d.name,
+               count(c.id) AS completions
+        FROM duties d
+        LEFT JOIN completions c ON c.duty = d.name
+        GROUP BY d.name
+        ORDER BY completions DESC, d.name
+        """
+    ).fetchall()
+
+
 def due_soon(con, days=7, on=None):
     """Open tasks due after today but within `days`."""
     return con.execute(
