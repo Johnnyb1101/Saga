@@ -9,7 +9,9 @@ import datetime as dt
 import sqlite3
 import sys
 from pathlib import Path
+
 from saga import analytics, db, export, reads, writes
+
 
 def days_between(iso_date):
     """Whole days from `iso_date` until today. Positive means in the past."""
@@ -263,6 +265,10 @@ def cmd_export(args):
 def cmd_init(args):
     print(f"Created {db.init_db(args.db)}")
 
+def cmd_migrate(args):
+    for line in db.migrate(args.db) or ["Already up to date."]:
+        print(line)
+
 def cmd_today(args):
     con = db.connect(args.db)
     late = reads.overdue(con)
@@ -388,6 +394,11 @@ def build_parser():
     p = sub.add_parser("init", help="create the database (first run only)",
                        description="Create a new database. Refuses if one already exists.")
     p.set_defaults(func=cmd_init, refresh=False)
+
+    p = sub.add_parser("migrate", help="bring an older database up to date",
+                       description="Apply any migrations this database has not "
+                                   "had yet. Backs it up first.")
+    p.set_defaults(func=cmd_migrate, refresh=False)
 
     return parser
 

@@ -35,6 +35,17 @@ CREATE TABLE measures (
 ) STRICT;
 
 -- ---------------------------------------------------------------------
+-- duties
+-- The standing roles that work belongs to. A completion's duty decides
+-- which performance statement it supports. Category is a different axis
+-- answering a different question, and the two are not interchangeable.
+-- Deliberately not seeded: duty names describe one operator's roles.
+-- ---------------------------------------------------------------------
+CREATE TABLE duties (
+    name TEXT PRIMARY KEY
+) STRICT;
+
+-- ---------------------------------------------------------------------
 -- projects
 -- Multi-week efforts with a deadline. Tasks may belong to one.
 -- ---------------------------------------------------------------------
@@ -63,7 +74,8 @@ CREATE TABLE tasks (
     due_date   TEXT    CHECK (date(due_date) IS due_date),
     status     TEXT    NOT NULL DEFAULT 'open'
                            CHECK (status IN ('open', 'done', 'cancelled')),
-    created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+    created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    duty       TEXT    REFERENCES duties(name) ON UPDATE CASCADE
 ) STRICT;
 
 -- ---------------------------------------------------------------------
@@ -83,6 +95,9 @@ CREATE TABLE completions (
     quantity     REAL,
     flagged      INTEGER NOT NULL DEFAULT 0
                              CHECK (flagged IN (0, 1)),
+    duty         TEXT    REFERENCES duties(name) ON UPDATE CASCADE,
 
     CHECK ((measure IS NULL) = (quantity IS NULL))
 ) STRICT;
+
+PRAGMA user_version = 1;

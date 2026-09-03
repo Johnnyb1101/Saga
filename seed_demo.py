@@ -10,8 +10,8 @@ something to show no matter when this is run.
 
 import datetime as dt
 
-from saga.db import ROOT, connect, init_db
 from saga import writes
+from saga.db import ROOT, connect, init_db
 
 DEMO_PATH = ROOT / "data" / "demo.db"
 TODAY = dt.date.today()

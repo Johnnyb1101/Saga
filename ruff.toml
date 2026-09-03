@@ -1,0 +1,16 @@
+# Ruff configuration. Saga has no build system and no dependencies, so this
+# file configures the linter and nothing else.
+
+[lint]
+ignore = [
+    # Timestamps are recorded in local time deliberately. The schema requires
+    # a bare "YYYY-MM-DD HH:MM:SS" via CHECK (datetime(x) IS x); a timezone-
+    # aware value carries an offset and fails it.
+    "DTZ005",
+    "DTZ011",
+]
+
+[lint.per-file-ignores]
+# An unattended run has nowhere to print. Catching everything is what puts a
+# traceback in the log rather than losing it to a window that already closed.
+"morning.py" = ["BLE001"]
