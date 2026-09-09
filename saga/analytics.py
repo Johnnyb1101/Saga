@@ -8,7 +8,7 @@ the raw timestamp against a bare date silently drops everything recorded
 after midnight on the closing day.
 """
 
-def measure_totals(con, since=None, until=None):
+def measure_totals(con, since=None, until=None, duty=None):
     """Each measure with its summed quantity and how many occasions produced it."""
     return con.execute(
         """
@@ -19,13 +19,14 @@ def measure_totals(con, since=None, until=None):
         WHERE measure IS NOT NULL
           AND (? IS NULL OR date(completed_at) >= ?)
           AND (? IS NULL OR date(completed_at) <= ?)
+          AND (? IS NULL OR duty = ?)
         GROUP BY measure
         ORDER BY total DESC
         """,
-        (since, since, until, until),
+        (since, since, until, until, duty, duty),
     ).fetchall()
 
-def volume(con, since=None, until=None):
+def volume(con, since=None, until=None, duty=None):
     """Headline counts for a period. Returns a single row."""
     return con.execute(
         """
@@ -37,11 +38,12 @@ def volume(con, since=None, until=None):
         JOIN categories k ON k.name = c.category
         WHERE (? IS NULL OR date(c.completed_at) >= ?)
           AND (? IS NULL OR date(c.completed_at) <= ?)
+          AND (? IS NULL OR c.duty = ?)
         """,
-        (since, since, until, until),
+        (since, since, until, until, duty, duty),
     ).fetchone()
 
-def completions_by_category(con, since=None, until=None):
+def completions_by_category(con, since=None, until=None, duty=None):
     """Every category with its counts, including categories with none."""
     return con.execute(
         """
@@ -54,13 +56,14 @@ def completions_by_category(con, since=None, until=None):
                ON c.category = k.name
               AND (? IS NULL OR date(c.completed_at) >= ?)
               AND (? IS NULL OR date(c.completed_at) <= ?)
+              AND (? IS NULL OR c.duty = ?)
         GROUP BY k.name
         ORDER BY completions DESC, k.name
         """,
-        (since, since, until, until),
+        (since, since, until, until, duty, duty),
     ).fetchall()
 
-def on_time_rate(con, since=None, until=None):
+def on_time_rate(con, since=None, until=None, duty=None):
     """On-time percentage by category, over tasks that actually had a due date."""
     return con.execute(
         """
@@ -74,13 +77,14 @@ def on_time_rate(con, since=None, until=None):
         WHERE t.due_date IS NOT NULL
           AND (? IS NULL OR date(c.completed_at) >= ?)
           AND (? IS NULL OR date(c.completed_at) <= ?)
+          AND (? IS NULL OR c.duty = ?)
         GROUP BY c.category
         ORDER BY pct DESC, c.category
         """,
-        (since, since, until, until),
+        (since, since, until, until, duty, duty),
     ).fetchall()
 
-def flagged_work(con, since=None, until=None):
+def flagged_work(con, since=None, until=None, duty=None):
     """Flagged completions in category order, with task and project context."""
     return con.execute(
         """
@@ -90,6 +94,7 @@ def flagged_work(con, since=None, until=None):
                c.outcome,
                c.measure,
                c.quantity,
+               c.duty,
                t.title AS task_title,
                p.name  AS project_name
         FROM completions c
@@ -98,7 +103,8 @@ def flagged_work(con, since=None, until=None):
         WHERE c.flagged = 1
           AND (? IS NULL OR date(c.completed_at) >= ?)
           AND (? IS NULL OR date(c.completed_at) <= ?)
+          AND (? IS NULL OR c.duty = ?)
         ORDER BY c.category, c.completed_at
         """,
-        (since, since, until, until),
+        (since, since, until, until, duty, duty),
     ).fetchall()

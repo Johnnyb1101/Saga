@@ -32,7 +32,7 @@ def print_tasks(rows, mode=None):
 CONSTRAINT_HELP = {
     "date(": "dates must be YYYY-MM-DD with zero padding, e.g. 2026-09-04",
     "datetime(": "timestamps must be YYYY-MM-DD HH:MM:SS",
-    "FOREIGN KEY": "no such category, project, or measure",
+    "FOREIGN KEY": "no such category, project, measure, or duty",
     "(measure is NULL)": "a measure and a quantity must be given together",
     "measures.name": "that measure is already registered",
     "duties.name": "that duty is already registered",
@@ -79,12 +79,15 @@ def cmd_add(args):
     if category is None:
         category = ask_choice("Category",
                               [row["name"] for row in reads.categories(con)])
+    duty = args.duty
+    if duty is None and guided:
+        duty = ask_duty(con)
     due = args.due
     if due is None and guided:
         due = ask("Due date (YYYY-MM-DD, blank for none)")
 
     task_id = writes.add_task(con, text, category,
-                              project_id=args.project, due_date=due)
+                              project_id=args.project, due_date=due, duty=duty)
     print(f"Added task {task_id}: {text}")
     maybe_export(args, con)
 
@@ -136,6 +139,13 @@ def ask_duty(con):
         return None
     choice = ask_choice("Duty", names + ["(none)"])
     return None if choice == "(none)" else choice
+
+def require_duty(con, duty):
+    """Reject an unregistered duty before it produces an empty review."""
+    names = [row["name"] for row in reads.duties(con)]
+    if duty not in names:
+        listed = ", ".join(names) or "none are registered"
+        raise ValueError(f"No duty named {duty!r}. Registered: {listed}")
 
 def cmd_done(args):
     con = db.connect(args.db)
@@ -225,12 +235,16 @@ def cmd_duty(args):
 
 def cmd_review(args):
     con = db.connect(args.db)
-    since, until = args.since, args.until
+    since, until, duty = args.since, args.until, args.duty
+    if duty is not None:
+        require_duty(con, duty)
 
     print(f"REVIEW PERIOD  {since or 'the beginning'} to {until or 'today'}")
+    if duty:
+        print(f"DUTY           {duty}")
     print()
 
-    counts = analytics.volume(con, since, until)
+    counts = analytics.volume(con, since, until, duty)
     print("VOLUME")
     print(f"  {counts['completions']:>7,} completions")
     print(f"  {counts['review_counting']:>7,} in review-counting categories")
@@ -238,7 +252,7 @@ def cmd_review(args):
     print(f"  {counts['with_a_number']:>7,} recorded a number")
     print()
 
-    measures = analytics.measure_totals(con, since, until)
+    measures = analytics.measure_totals(con, since, until, duty)
     if measures:
         print("MEASURES")
         for row in measures:
@@ -248,15 +262,15 @@ def cmd_review(args):
         print()
 
     rates = {row["category"]: row["pct"]
-             for row in analytics.on_time_rate(con, since, until)}
+             for row in analytics.on_time_rate(con, since, until, duty)}
     print("BY CATEGORY")
-    for row in analytics.completions_by_category(con, since, until):
+    for row in analytics.completions_by_category(con, since, until, duty):
         pct = rates.get(row["category"])
         rate = f"{pct:>5}% on time" if pct is not None else "        -"
         print(f"  {row['category']:<10}{row['completions']:>5,} completions   {rate}")
     print()
 
-    flagged = analytics.flagged_work(con, since, until)
+    flagged = analytics.flagged_work(con, since, until, duty)
     if not flagged:
         print("No flagged work in this period.")
         return
@@ -372,6 +386,7 @@ def build_parser():
                        description="Add a task. Run it bare to be prompted for everything.")
     p.add_argument("text", nargs="?", help="what the task is")
     p.add_argument("-c", "--category", help="category name")
+    p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--due", metavar="DATE", help="due date, YYYY-MM-DD")
     p.add_argument("--project", type=int, metavar="ID", help="project id")
     p.set_defaults(func=cmd_add)
@@ -421,6 +436,7 @@ def build_parser():
                                    "per-category rates, and flagged accomplishments.")
     p.add_argument("--since", metavar="DATE", help="start of the period, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="end of the period, YYYY-MM-DD")
+    p.add_argument("--duty", metavar="NAME", help="only work filed under this duty")
     p.set_defaults(func=cmd_review)
 
     p = sub.add_parser("export", help="regenerate exports/ for outside consumers",

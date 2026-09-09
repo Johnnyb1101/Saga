@@ -18,15 +18,15 @@ def add_project(con, name, description=None, start_date=None, deadline=None):
         )
     return cur.lastrowid
 
-def add_task(con, title, category, project_id=None, due_date=None):
+def add_task(con, title, category, project_id=None, due_date=None, duty=None):
     """Insert a task. Returns its new id."""
     with con:
         cur = con.execute(
             """
-            INSERT INTO tasks (title, category, project_id, due_date)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO tasks (title, category, project_id, due_date, duty)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (title, category, project_id, due_date),
+            (title, category, project_id, due_date, duty),
         )
     return cur.lastrowid
 
