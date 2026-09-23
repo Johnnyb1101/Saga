@@ -225,6 +225,23 @@ even by accident. Task text describes the operator's own work.
 ever been committed to this repository. Demo data used in examples and
 tests is invented.
 
+## Development checks
+
+Use a virtual environment created with Python 3.14 and install Ruff as a
+development tool. On Windows, run:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m ruff check --no-cache .
+```
+
+Tests use invented records in temporary or in-memory databases. They cover
+backup recovery, capture, completion rollback, date boundaries, review
+filters, migration preservation, and exports. The version-zero schema in
+`tests/fixtures/schema_v0.sql` is frozen from commit `7ff0f99^`; keep it
+independent of the current schema. Migration failure atomicity and atomic
+export publication are not established by these tests.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
