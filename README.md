@@ -81,8 +81,7 @@ Working end to end.
 - [x] Command-line interface
 - [x] Export for external consumers
 
-Not built yet: recurring tasks, and a backup command using SQLite's own
-backup API.
+Not built yet: recurring tasks and automatic backup scheduling/retention.
 
 ## Requirements
 
@@ -111,6 +110,7 @@ python main.py project "name" [--deadline DATE]
 python main.py measure ["NAME"]         # list measures, or register one
 python main.py review [--since DATE] [--until DATE]
 python main.py export [--out DIR]       # regenerate exports/
+python main.py backup --out DIR         # create a verified database snapshot
 
 python main.py --db PATH <command>      # run against a different database
 ```
@@ -119,6 +119,28 @@ python main.py --db PATH <command>      # run against a different database
 `python main.py done 12` walks you through it. Supply the flags and it never
 asks — which keeps the commands usable from a scheduled task, where there is
 nobody to answer.
+
+## Backup and recovery
+
+Run `python main.py backup --out "D:\SagaBackups"`, replacing the directory
+with your backup location. Each run creates a uniquely named `.db` snapshot
+using SQLite's backup API and checks it with `PRAGMA integrity_check`.
+The source is opened read-only; exports are not refreshed. A failed copy is
+removed. Only use or copy a snapshot after the command reports success.
+
+Choose a separate drive or a synced folder for the closed backup files.
+A copy on the same drive does not protect against drive loss. Scheduling
+and retention are manual for now; the command never prunes older backups.
+
+To recover, stop Saga commands and the morning scheduled task, then copy a
+successful backup to a **new local path**, such as `data/recovered.db`.
+Run `python main.py --db data/recovered.db list` and
+`python main.py --db data/recovered.db review` to inspect it. Keep the
+original database intact until you have confirmed the recovered records.
+Use `--db data/recovered.db` to work with the recovered copy. This procedure
+does not replace the default database or change the morning task's path.
+If a backup predates a schema upgrade, run `migrate` against the recovered
+copy first, using the same `--db` option.
 
 ## Try it
 

@@ -313,6 +313,15 @@ def cmd_export(args):
 def cmd_init(args):
     print(f"Created {db.init_db(args.db)}")
 
+
+def cmd_backup(args):
+    try:
+        path = db.backup(args.db, args.out)
+    except (OSError, sqlite3.Error) as exc:
+        raise ValueError(f"Backup failed: {exc}") from exc
+    print(f"Verified backup: {path}")
+
+
 def cmd_migrate(args):
     for line in db.migrate(args.db) or ["Already up to date."]:
         print(line)
@@ -448,6 +457,13 @@ def build_parser():
     p.add_argument("--since", metavar="DATE", help="review period start, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="review period end, YYYY-MM-DD")
     p.set_defaults(func=cmd_export, refresh=False)
+
+    p = sub.add_parser("backup", help="create a verified database snapshot",
+                       description="Back up with SQLite's backup API and verify "
+                                   "the copy. Does not refresh exports.")
+    p.add_argument("--out", type=Path, required=True, metavar="DIR",
+                   help="backup directory (prefer a separate drive or synced folder)")
+    p.set_defaults(func=cmd_backup, refresh=False)
 
     p = sub.add_parser("init", help="create the database (first run only)",
                        description="Create a new database. Refuses if one already exists.")

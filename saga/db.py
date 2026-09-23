@@ -7,6 +7,8 @@ off by default and the setting is per-connection, not stored in the file.
 
 import datetime as dt
 import sqlite3
+import tempfile
+from contextlib import closing
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -75,6 +77,34 @@ def init_db(db_path=DB_PATH):
 
 
 MIGRATIONS_PATH = ROOT / "migrations"
+
+
+def backup(db_path, out_dir):
+    """Create and verify a unique snapshot, without modifying the source."""
+    db_path = Path(db_path).resolve()
+    out_dir = Path(out_dir)
+    # Read-only mode also refuses a missing source instead of creating one.
+    with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as source:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        with tempfile.NamedTemporaryFile(
+            prefix=f"{db_path.stem}-{stamp}-", suffix=".db",
+            dir=out_dir, delete=False,
+        ) as reserved:
+            temporary = Path(reserved.name)
+        verified = False
+        try:
+            with closing(sqlite3.connect(temporary)) as destination:
+                source.backup(destination)
+                checks = destination.execute("PRAGMA integrity_check").fetchall()
+                if checks != [("ok",)]:
+                    raise ValueError(f"Backup integrity check failed: {checks}")
+            verified = True
+        finally:
+            # Never leave a failed snapshot looking like a usable backup.
+            if not verified:
+                temporary.unlink()
+    return temporary
 
 
 def _backup(con, db_path):
