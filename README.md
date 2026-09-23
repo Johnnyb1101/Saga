@@ -1,7 +1,7 @@
 # Saga
 
 A personal operations database and morning-brief generator. SQLite, a small
-Python CLI, and no third-party dependencies.
+Python CLI, and no third-party runtime dependencies.
 
 ## The problem
 
@@ -15,10 +15,11 @@ last few months. The accomplishments that took the most effort are usually
 the ones furthest away.
 
 Saga treats the completion record as the primary artifact and the daily
-task list as the mechanism that fills it. Every closed task is archived
-with its outcome and a measurable detail, and flagged if it is the kind of
-thing worth writing up later. Two years on, the review gets written from
-records instead of from memory.
+task list as the mechanism that fills it. Completing a task creates an
+archive record; cancelling one does not. Outcomes, measures, and review
+flags make the record useful later, but `done` does not require them.
+Standalone `log` entries require an outcome. Two years on, the review can
+be written from the evidence actually recorded instead of from memory.
 
 ## What it can tell you
 
@@ -27,11 +28,12 @@ questions are aggregate ones — cheap in SQL, miserable anywhere else.
 
 - Completions by category across a date range.
 - Flagged accomplishments, grouped and ready to draft from.
-- Projects with a deadline inside thirty days that still have open tasks.
+- Active projects overdue or due within thirty days, with open-task counts
+  (including zero).
 - On-time completion rate by category.
-- Total volume per program across a review period.
+- Volume and measures filtered by registered duty across a review period.
 
-Run against the bundled demo data:
+Excerpt from `review` against generated, invented demo data:
 
 ```
 $ python main.py --db data/demo.db review
@@ -57,21 +59,15 @@ BY CATEGORY
   home          8 completions    75.0% on time
   personal      8 completions    75.0% on time
 
-FLAGGED - work
-  2025-08-12  Ran the spring onboarding cycle   [personnel onboarded: 6]
-  2025-10-31  Ran the summer onboarding cycle   [personnel onboarded: 9]
-  2025-12-30  Automated the weekly roll-up   [hours saved: 12]
-  2026-03-30  Ran the autumn onboarding cycle   [personnel onboarded: 7]
-  2026-06-18  Automated the inventory export   [hours saved: 8]
-  2026-08-22  Fixed the early-morning outage   [hours saved: 3]
 ```
 
-Every figure there is summed from records. All of it is invented demo data —
-no real entry has ever been in this repository.
+Every figure there is summed from invented records. The full report also
+lists flagged accomplishments with their completion ids.
+Demo dates are relative to the day the database is generated.
 
 ## Status
 
-Working end to end.
+The CLI covers capture, daily work, review evidence, and recovery.
 
 - [x] Project foundation
 - [x] Schema and database layer
@@ -80,18 +76,64 @@ Working end to end.
 - [x] Analytics and review roll-up
 - [x] Command-line interface
 - [x] Export for external consumers
+- [x] Standalone and backdated accomplishments
+- [x] Verified backups and recovery tests
+- [x] Historical snapshots and append-only corrections
+- [x] Transactional migrations with failure tests
+- [x] Task cancellation, rescheduling, and project closure
+- [x] Daily, weekly, and monthly recurrence
+- [x] Morning brief script (scheduler setup is machine-specific)
 
-Not built yet: automatic backup scheduling/retention and a graphical interface.
+Remaining work includes atomic export publication, automatic backup
+scheduling/retention, and broader input-quality checks. A future interface
+will use the same core functions; its form will follow actual capture needs.
 
 ## Requirements
 
-Python 3.14 with SQLite 3.37 or later, which is what ships with it. No
-third-party packages — `sqlite3` is in the standard library.
+Python 3.14 with SQLite 3.37 or later. `sqlite3` is in the standard library;
+Ruff is an optional development tool, not a runtime requirement.
 
 The SQLite floor is real: every table is declared `STRICT`, which arrived
 in 3.37. Check yours with:
 
     python -c "import sqlite3; print(sqlite3.sqlite_version)"
+
+## Setup and upgrades
+
+From the repository directory on Windows, create an environment using a
+complete Python 3.14 installation:
+
+```powershell
+py -3.14 -m venv .venv
+.\.venv\Scripts\python.exe --version
+.\.venv\Scripts\python.exe -c "import sqlite3; print(sqlite3.sqlite_version)"
+```
+
+If the launcher is unavailable or points to an incomplete installation, use
+the full path to a working Python 3.14 executable for the first command.
+Reusing an environment created with an older interpreter does not upgrade it.
+The examples below use `python` for brevity; replace it with
+`.\.venv\Scripts\python.exe` when the environment is not activated.
+
+For a **new** database:
+
+```powershell
+.\.venv\Scripts\python.exe main.py init
+```
+
+For an **existing** database after updating the code:
+
+```powershell
+.\.venv\Scripts\python.exe main.py migrate
+.\.venv\Scripts\python.exe main.py export
+```
+
+Do not run `init` to upgrade: it refuses an existing file. The current database
+schema is version 3. Migration saves a local backup before pending changes
+and commits each migration only after checking its version. That local copy
+does not replace a separate-drive backup. To use another database, put
+`--db PATH` before the command. When exporting an alternate database, also
+use `--out DIR` to avoid overwriting the default exports.
 
 ## Usage
 
@@ -100,15 +142,16 @@ python main.py                          # list every command
 python main.py <command> --help         # details for one
 
 python main.py init                     # create the database (first run only)
+python main.py migrate                  # upgrade an existing database
 
-python main.py today                    # due today, plus anything overdue
+python main.py today [--days 14]         # overdue, due today, and coming up
 python main.py list [-c NAME]           # every open task, with ids
 python main.py cancel ID                # cancel an open task; no completion logged
 python main.py reschedule ID --due DATE # change an open task's due date
 python main.py reschedule ID --clear-due
 python main.py projects                 # all project ids, statuses, and open counts
 python main.py close-project ID         # mark done only when no open tasks remain
-python main.py add "text" [-c NAME] [--due DATE] [--project ID]
+python main.py add "text" [-c NAME] [--due DATE] [--project ID] [--duty NAME]
 python main.py add "text" -c work --due DATE --repeat monthly [--interval 1]
 python main.py recurrences              # series ids, schedules, and current tasks
 python main.py stop-recurrence ID       # stop generation; retain the current task
@@ -117,7 +160,8 @@ python main.py log "Outcome" -c work [--duty NAME] [--measure NAME] [--quantity 
 python main.py upcoming [--days 30]     # project deadlines approaching
 python main.py project "name" [--deadline DATE]
 python main.py measure ["NAME"]         # list measures, or register one
-python main.py review [--since DATE] [--until DATE]
+python main.py duty ["NAME"]            # list duties, or register one
+python main.py review [--since DATE] [--until DATE] [--duty NAME]
 python main.py completions [--since DATE] [--until DATE] [--duty NAME]
 python main.py history ID               # all revisions of a completion
 python main.py correct ID --reason "..." --outcome "..."
@@ -127,10 +171,17 @@ python main.py backup --out DIR         # create a verified database snapshot
 python main.py --db PATH <command>      # run against a different database
 ```
 
-`add`, `project`, and `done` prompt for anything you leave off, so
-`python main.py done 12` walks you through it. Supply the flags and it never
-asks — which keeps the commands usable from a scheduled task, where there is
-nobody to answer.
+Square brackets in this reference mean optional arguments; do not type them.
+Bare `add` prompts for task text, category, duty when available, and due date.
+With task text supplied, category still prompts if omitted, while omitted
+due date and duty stay empty. Bare `project` prompts for name and deadline;
+with a name supplied it does not prompt for an omitted deadline.
+
+`done ID` prompts for outcome, measure/quantity, duty when missing, and review
+flag. Supplying any of `--outcome`, `--measure`, `--quantity`, or `--flag`
+disables that guided flow; `--date` or `--duty` alone does not. Prompts require
+a terminal. Unattended commands must supply enough arguments to avoid them,
+such as `add "Task" -c work` or `done ID --outcome "Delivered"`.
 
 Use `log` for work that was never a task; it creates only a completion.
 Run `python main.py log` for guided entry, including an optional completion
@@ -288,16 +339,44 @@ python main.py --db data/demo.db today
 python main.py --db data/demo.db review
 ```
 
-`seed_demo.py` builds `data/demo.db` from invented data, through the same
-write functions the CLI uses. Your own database is never touched.
+`seed_demo.py` recreates `data/demo.db` from invented data through the same
+write functions the CLI uses, overwriting an existing demo database. It does
+not touch the default `data/saga.db`. Keep real records out of the demo file.
+
+## Morning brief and exports
+
+`python morning.py` prints the `today` and `upcoming` views using Saga's CLI
+and default database. It logs runs to `morning.log` and waits for Enter when
+a terminal is attached. The script does not install a scheduled task. To
+schedule it, configure Windows Task Scheduler with the full path to the
+project's Python interpreter and `morning.py`; choose the desired time and
+missed-run behavior there. The repository alone does not establish whether
+a scheduled task exists or has run successfully on a particular machine.
+
+External consumers can read `brief.json` (format version 1), `brief.md`, and
+`review.json` (format version 2). These formats are separate from database
+schema version 3. The bundled morning script calls the core through the CLI;
+it does not consume the JSON files.
+
+Most commands against the default database refresh exports before running
+when `brief.json` is missing, unreadable, invalid JSON, or dated another day.
+`init`, `migrate`, `backup`, `export`, and help do not run that freshness check;
+`export` explicitly writes the files itself. Task/completion changes refresh
+exports afterward, but registering a measure or duty does not. Commands
+using an alternate database do not automatically refresh exports.
+
+No command running means no automatic refresh. The date check also does not
+detect every same-day inconsistency or missing sibling export. Each file is
+currently overwritten directly; atomic publication remains outstanding.
+Consumers needing a current snapshot should arrange an explicit export run.
 
 ## Design notes
 
 **Completions are a separate table, not columns on tasks.**
-A task that recurs has many completions; storing `completed_at` on the task
-row caps it at one. Tasks are mutable working state — text gets edited,
-dates get moved. Completions are an append-only archive that must never
-change. Two lifecycles, two tables.
+Each recurring occurrence is a separate task row. Completing it records an
+accomplishment; correcting that accomplishment appends another revision.
+Tasks are mutable working state, while completion rows preserve evidence
+and their historical context. Reports count the latest revision only.
 
 **A completion does not require a task.**
 `completions.task_id` is nullable. Work gets done that was never written
@@ -313,37 +392,31 @@ query. If the distinction ever needs to exist, it is a column.
 
 **The database never lives in a synced folder.**
 Cloud sync clients copy whole files and have no understanding of SQLite's
-locking. A sync landing mid-transaction produces a corrupt remote copy, and
-write-ahead-log mode's sidecar files can sync out of order into an
-unrecoverable state. The database stays on local disk; a generated
-`exports/` directory is what syncs.
+locking. Copying during a write or synchronizing sidecar files out of order
+can produce inconsistent copies. Keep the working database on local disk;
+sync generated exports or closed backup snapshots instead.
 
-**Nothing outside this program reads the database.**
+**External consumers use exports; Saga's own interfaces use the core.**
 External consumers read `exports/brief.json`, which carries a version
 field. The schema can change without breaking anything downstream, and the
 consumer never needs to know SQL.
 
-**A stale export is indistinguishable from a quiet day.**
-`exports/` regenerated after every write, which is not often enough. A
-date passing is not a write, so a stretch with nothing completed left the
-brief on disk still answering with an older date — reporting tasks as due
-today that were already a day overdue. Every command now compares the
-`date` field inside `brief.json` against today and regenerates first if
-they differ. Modification time would have been the easier check and the
-wrong one: sync clients rewrite it.
+**Freshness is based on the brief's date, not file modification time.**
+A date passing is not a write. The command-time refresh described above
+brings quiet days forward when Saga runs. Sync clients can rewrite file
+modification times, so those are not used as the freshness signal.
 
 ## Data handling
 
-This system holds no personally identifiable information about anyone other
-than its operator, and no protected or sensitive organizational data.
+Use Saga only for the operator's own nonsensitive workload and accomplishments.
+Do not enter other people's identifiers, patient information, or protected
+organizational data. The schema has no dedicated person fields, but titles,
+descriptions, outcomes, and correction reasons are free text. Keeping sensitive
+data out depends on what the operator enters; the schema cannot enforce it.
 
-That constraint is structural rather than procedural: the schema has no
-fields for personal identifiers, so there is nowhere for that data to go
-even by accident. Task text describes the operator's own work.
-
-`data/` and `exports/` are excluded from version control. No real entry has
-ever been committed to this repository. Demo data used in examples and
-tests is invented.
+`data/` and `exports/` are excluded from version control. That helps prevent
+accidental commits but is not a guarantee that sensitive text cannot be
+committed elsewhere. Demo data used in examples and tests is invented.
 
 ## Development checks
 
@@ -351,6 +424,7 @@ Use a virtual environment created with Python 3.14 and install Ruff as a
 development tool. On Windows, run:
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install ruff
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m ruff check --no-cache .
 ```
