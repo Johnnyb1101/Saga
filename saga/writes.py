@@ -6,6 +6,9 @@ caller decides what belongs in a single transaction.
 All SQL uses ? placeholders. Values are never formatted into a statement.
 """
 
+import datetime as dt
+
+
 def add_project(con, name, description=None, start_date=None, deadline=None):
     """Insert a project. Returns its new id."""
     with con:
@@ -21,6 +24,12 @@ def add_project(con, name, description=None, start_date=None, deadline=None):
 def add_task(con, title, category, project_id=None, due_date=None, duty=None):
     """Insert a task. Returns its new id."""
     with con:
+        if project_id is not None:
+            project = con.execute("SELECT status FROM projects WHERE id=?", (project_id,)).fetchone()
+            if project is None:
+                raise ValueError(f"No project with id {project_id}.")
+            if project["status"] in ("done", "cancelled"):
+                raise ValueError(f"Project {project_id} is {project['status']}; cannot add tasks.")
         cur = con.execute(
             """
             INSERT INTO tasks (title, category, project_id, due_date, duty)
@@ -29,6 +38,44 @@ def add_task(con, title, category, project_id=None, due_date=None, duty=None):
             (title, category, project_id, due_date, duty),
         )
     return cur.lastrowid
+
+def cancel_task(con, task_id):
+    """Cancel an open task without creating an accomplishment."""
+    with con:
+        changed = con.execute("UPDATE tasks SET status='cancelled' WHERE id=? AND status='open'",
+                              (task_id,))
+        if changed.rowcount != 1:
+            raise ValueError(f"Task {task_id} does not exist or is not open.")
+
+
+def reschedule_task(con, task_id, due_date):
+    """Change or clear an open task's due date."""
+    if due_date is not None:
+        try:
+            valid = dt.date.fromisoformat(due_date).isoformat() == due_date
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("due date must be a valid YYYY-MM-DD date")
+    with con:
+        changed = con.execute("UPDATE tasks SET due_date=? WHERE id=? AND status='open'",
+                              (due_date, task_id))
+        if changed.rowcount != 1:
+            raise ValueError(f"Task {task_id} does not exist or is not open.")
+
+
+def close_project(con, project_id):
+    """Close an active or on-hold project only after all tasks are resolved."""
+    with con:
+        changed = con.execute(
+            """UPDATE projects SET status='done'
+               WHERE id=? AND status IN ('active', 'on_hold')
+                 AND NOT EXISTS (SELECT 1 FROM tasks WHERE project_id=? AND status='open')""",
+            (project_id, project_id),
+        )
+        if changed.rowcount != 1:
+            raise ValueError(f"Project {project_id} is missing, already closed, or still has open tasks.")
+
 
 def add_measure(con, name):
     """Register a measure so quantities can be recorded against it."""

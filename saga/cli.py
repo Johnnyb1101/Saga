@@ -457,6 +457,37 @@ def cmd_upcoming(args):
         print(f"  {row['days_left']:>4}d  {row['deadline']}  "
               f"{row['name']:<38}{row['open_tasks']} open")
 
+def cmd_cancel(args):
+    with closing(db.connect(args.db)) as con:
+        writes.cancel_task(con, args.task_id)
+        print(f"Cancelled task {args.task_id}.")
+        maybe_export(args, con)
+
+
+def cmd_reschedule(args):
+    with closing(db.connect(args.db)) as con:
+        writes.reschedule_task(con, args.task_id, args.due)
+        print(f"Task {args.task_id}: due date {args.due or 'cleared'}.")
+        maybe_export(args, con)
+
+
+def cmd_projects(args):
+    with closing(db.connect(args.db)) as con:
+        rows = reads.projects(con)
+        if not rows:
+            print("No projects.")
+        for row in rows:
+            print(f"  {row['id']:>4}  {row['status']:<10} {row['deadline'] or '-':<10} "
+                  f"{row['open_tasks']} open  {row['name']}")
+
+
+def cmd_close_project(args):
+    with closing(db.connect(args.db)) as con:
+        writes.close_project(con, args.project_id)
+        print(f"Closed project {args.project_id}.")
+        maybe_export(args, con)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="saga",
@@ -480,6 +511,24 @@ def build_parser():
                        description="All open tasks, soonest due first, undated last.")
     p.add_argument("-c", "--category", help="only this category")
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("cancel", help="cancel an open task without recording a completion")
+    p.add_argument("task_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_cancel)
+
+    p = sub.add_parser("reschedule", help="change or clear an open task's due date")
+    p.add_argument("task_id", type=int, metavar="ID")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--due", metavar="DATE", help="new due date, YYYY-MM-DD")
+    group.add_argument("--clear-due", dest="due", action="store_const", const=None)
+    p.set_defaults(func=cmd_reschedule)
+
+    p = sub.add_parser("projects", help="list all projects with ids and open-task counts")
+    p.set_defaults(func=cmd_projects)
+
+    p = sub.add_parser("close-project", help="close a project with no open tasks")
+    p.add_argument("project_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_close_project)
 
     p = sub.add_parser("add", help="add a task",
                        description="Add a task. Run it bare to be prompted for everything.")

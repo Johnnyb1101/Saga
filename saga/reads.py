@@ -54,6 +54,17 @@ def open_tasks(con, category=None):
         (category, category),
     ).fetchall()
 
+def projects(con):
+    """Every project, including undated and closed projects, with task counts."""
+    return con.execute(
+        """SELECT p.id, p.name, p.status, p.deadline, count(t.id) AS open_tasks
+           FROM projects p
+           LEFT JOIN tasks t ON t.project_id=p.id AND t.status='open'
+           GROUP BY p.id
+           ORDER BY p.deadline IS NULL, p.deadline, p.id"""
+    ).fetchall()
+
+
 def due_today(con, on=None):
     """Open tasks due on the given day. Defaults to today."""
     return con.execute(

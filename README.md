@@ -103,6 +103,11 @@ python main.py init                     # create the database (first run only)
 
 python main.py today                    # due today, plus anything overdue
 python main.py list [-c NAME]           # every open task, with ids
+python main.py cancel ID                # cancel an open task; no completion logged
+python main.py reschedule ID --due DATE # change an open task's due date
+python main.py reschedule ID --clear-due
+python main.py projects                 # all project ids, statuses, and open counts
+python main.py close-project ID         # mark done only when no open tasks remain
 python main.py add "text" [-c NAME] [--due DATE] [--project ID]
 python main.py done ID [--outcome "..."] [--measure NAME] [--quantity N] [--flag]
 python main.py log "Outcome" -c work [--duty NAME] [--measure NAME] [--quantity N] [--flag]
@@ -140,6 +145,20 @@ An explicit date is stored at midnight local time; omitted dates use the
 current timestamp. Invalid or future completion dates are rejected. For
 `done`, supplying only an id and date still prompts for accomplishment details.
 Backdating records when work happened; it does not edit an existing completion.
+
+## Task and project maintenance
+
+Use `list` to find a task id and `projects` to find a project id. `cancel`
+retains the task with status `cancelled` and records no accomplishment.
+`reschedule` requires either `--due YYYY-MM-DD` or `--clear-due`; past dates
+are valid. Both commands accept only open tasks and leave completion history
+unchanged. Successfully changing the default database refreshes exports.
+
+`projects` includes undated, on-hold, and closed projects. `close-project`
+marks an active or on-hold project done only after every task is completed
+or cancelled. It does not change task statuses or create completions. New
+tasks cannot be assigned to done or cancelled projects. Reopening and
+recurrence are not part of these commands.
 
 ## Historical context and corrections
 
