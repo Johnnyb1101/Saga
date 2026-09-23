@@ -84,8 +84,8 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Daily, weekly, and monthly recurrence
 - [x] Morning brief script (scheduler setup is machine-specific)
 
-Remaining work includes atomic export publication, automatic backup
-scheduling/retention, and broader input-quality checks. A future interface
+Remaining work includes automatic backup scheduling/retention and broader
+input-quality checks. A future interface
 will use the same core functions; its form will follow actual capture needs.
 
 ## Requirements
@@ -354,21 +354,44 @@ missed-run behavior there. The repository alone does not establish whether
 a scheduled task exists or has run successfully on a particular machine.
 
 External consumers can read `brief.json` (format version 1), `brief.md`, and
-`review.json` (format version 2). These formats are separate from database
+`review.json` (format version 2), with `manifest.json` (format version 1)
+describing the published set. These formats are separate from database
 schema version 3. The bundled morning script calls the core through the CLI;
 it does not consume the JSON files.
 
 Most commands against the default database refresh exports before running
-when `brief.json` is missing, unreadable, invalid JSON, or dated another day.
+when the manifest is missing or outdated, files are missing or damaged,
+hashes disagree, or JSON metadata has an unexpected type or version.
 `init`, `migrate`, `backup`, `export`, and help do not run that freshness check;
 `export` explicitly writes the files itself. Task/completion changes refresh
 exports afterward, but registering a measure or duty does not. Commands
 using an alternate database do not automatically refresh exports.
 
-No command running means no automatic refresh. The date check also does not
-detect every same-day inconsistency or missing sibling export. Each file is
-currently overwritten directly; atomic publication remains outstanding.
-Consumers needing a current snapshot should arrange an explicit export run.
+No command running means no automatic refresh. Validation checks the files,
+not whether someone changed the source database outside Saga. Consumers
+needing a current snapshot should arrange an explicit export run.
+
+Publication reads both reports from one SQLite snapshot, serializes all
+outputs, and writes and flushes temporary files in the destination directory.
+It then atomically replaces each named file and publishes the manifest last.
+Non-finite numbers such as infinity are rejected before any file is replaced.
+An export error after a database change reports that the change was saved;
+retry the export rather than repeating the database operation.
+
+Individual replacements are atomic; the set of files is not a filesystem
+transaction. A failure or overlapping export runs can leave a mixed set,
+which the manifest detects. Consumers needing consistency across files should
+read the manifest, read each file into memory, verify every SHA-256 hash in
+its `files` mapping, and reread the manifest to ensure it has not changed.
+Use those verified bytes; reopening paths afterward starts a new read.
+Retry if validation fails. The manifest also carries a generation id, date,
+and common generation timestamp. It is a consistency check, not an authenticity
+signature. Synchronization software may deliver files out of order, so remote
+consumers should also validate before using the set.
+
+Ordinary failures clean up this run's temporary files. Abrupt process
+termination can leave unused `.tmp` files, which readers ignore. Existing
+exports without a manifest are regenerated on the next freshness check.
 
 ## Design notes
 
@@ -438,7 +461,9 @@ independent of the current schema. `tests/fixtures/schema_v1.sql` preserves
 the schema before archive history was introduced, and `schema_v2.sql` preserves
 the schema before recurrence. Migration tests also inject failures to
 verify rollback of schema, records, and version, and successful retry.
-Atomic export publication is not established by these tests.
+Export tests cover snapshot consistency, staging/replacement failures,
+manifest validation, invalid numbers, and successful retry. File replacement
+is atomic individually; multi-file consistency requires manifest validation.
 
 Migrations commit one at a time, after checking their resulting schema
 version. A failing migration rolls back completely; earlier successful

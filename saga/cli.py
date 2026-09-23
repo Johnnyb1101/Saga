@@ -387,27 +387,27 @@ def cmd_review(args):
         print(f"  {row['id']:>4}  {row['completed_at'][:10]}  {row['outcome'] or row['task_title'] or '(no outcome)'}{detail}{context}")
 
 def refresh_if_stale(args):
-    """Bring exports/ forward when they are not from today.
-
-    A date passing is not a write, so maybe_export never fires on a quiet
-    day and the brief on disk keeps answering with yesterday's date.
-    """
+    """Refresh missing, inconsistent, or out-of-date export sets."""
     if Path(args.db).resolve() != db.DB_PATH.resolve():
         return
     if export.is_stale():
-        export.write_all(db.connect(args.db))
+        with closing(db.connect(args.db)) as con:
+            export.write_all(con)
 
 def maybe_export(args, con):
     """Regenerate exports, but only when working on the real database."""
     if Path(args.db).resolve() != db.DB_PATH.resolve():
         return
-    export.write_all(con)
+    try:
+        export.write_all(con)
+    except export.ExportError as exc:
+        raise export.ExportError(f"Database change was saved, but {exc}") from exc
 
 def cmd_export(args):
-    con = db.connect(args.db)
-    for path in export.write_all(con, out_dir=args.out,
-                                 since=args.since, until=args.until):
-        print(f"Wrote {path}")
+    with closing(db.connect(args.db)) as con:
+        for path in export.write_all(con, out_dir=args.out,
+                                     since=args.since, until=args.until):
+            print(f"Wrote {path}")
 
 def cmd_init(args):
     print(f"Created {db.init_db(args.db)}")
@@ -668,7 +668,7 @@ def build_parser():
     p.set_defaults(func=cmd_review)
 
     p = sub.add_parser("export", help="regenerate exports/ for outside consumers",
-                       description="Write brief.json, brief.md and review.json. "
+                       description="Write brief.json, brief.md, review.json and manifest.json. "
                                    "Runs automatically after every write to the "
                                    "default database.")
     p.add_argument("--out", type=Path, default=export.EXPORT_DIR, metavar="DIR",
