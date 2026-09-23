@@ -1,12 +1,12 @@
-"""Generate the files that anything outside this program reads.
-
-The morning brief, a phone, or any other consumer reads exports/, never the
-database. That boundary means the schema can change without breaking them,
-and it is why brief.json carries a schema_version.
-"""
+"""Publish complete files and a final manifest for external consumers."""
 
 import datetime as dt
+import hashlib
 import json
+import os
+import tempfile
+import uuid
+from pathlib import Path
 
 from saga import analytics, db, reads
 
@@ -15,6 +15,12 @@ REVIEW_SCHEMA_VERSION = 2
 EXPORT_DIR = db.ROOT / "exports"
 SOON_DAYS = 14
 DEADLINE_DAYS = 30
+EXPORT_NAMES = ("brief.json", "brief.md", "review.json")
+MANIFEST_VERSION = 1
+
+
+class ExportError(ValueError):
+    """An export failed; existing files may require a publication retry."""
 
 
 def as_dicts(rows):
@@ -95,28 +101,84 @@ def brief_markdown(brief):
 
 
 def write_all(con, out_dir=EXPORT_DIR, since=None, until=None):
-    """Regenerate every export. Returns the paths written."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    brief = build_brief(con)
-    review = build_review(con, since, until)
-
-    written = []
-    for name, content in [
-        ("brief.json", json.dumps(brief, indent=2)),
-        ("brief.md", brief_markdown(brief)),
-        ("review.json", json.dumps(review, indent=2)),
-    ]:
-        path = out_dir / name
-        path.write_text(content, encoding="utf-8")
-        written.append(path)
-    return written
+    """Stage all files, replace each atomically, and publish the manifest last."""
+    out_dir = Path(out_dir)
+    staged = []
+    try:
+        # A savepoint pins all queries to one snapshot without committing any
+        # caller-owned transaction. No filesystem work holds the read snapshot.
+        con.execute("SAVEPOINT saga_export_snapshot")
+        try:
+            brief = build_brief(con)
+            review = build_review(con, since, until)
+        finally:
+            con.execute("RELEASE SAVEPOINT saga_export_snapshot")
+        stamp = now()
+        brief["generated_at"] = review["generated_at"] = stamp
+        contents = {
+            "brief.json": json.dumps(brief, indent=2, allow_nan=False).encode("utf-8"),
+            "brief.md": brief_markdown(brief).encode("utf-8"),
+            "review.json": json.dumps(review, indent=2, allow_nan=False).encode("utf-8"),
+        }
+        manifest = {
+            "schema_version": MANIFEST_VERSION,
+            "generation_id": uuid.uuid4().hex,
+            "generated_at": stamp,
+            "date": brief["date"],
+            "files": {name: hashlib.sha256(content).hexdigest() for name, content in contents.items()},
+        }
+        contents["manifest.json"] = json.dumps(manifest, indent=2, allow_nan=False).encode("utf-8")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name, content in contents.items():
+            with tempfile.NamedTemporaryFile(dir=out_dir, prefix=f".{name}-", suffix=".tmp", delete=False) as temp:
+                staged.append((Path(temp.name), out_dir / name))
+                temp.write(content)
+                temp.flush()
+                os.fsync(temp.fileno())
+        for temporary, destination in staged:
+            os.replace(temporary, destination)
+        return [destination for _, destination in staged]
+    except (OSError, ValueError) as exc:
+        raise ExportError(f"Export failed: {exc}. Retry the export; validate manifest.json before using the set.") from exc
+    finally:
+        cleanup_errors = []
+        for temporary, _ in staged:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_errors.append(f"{temporary}: {exc}")
+        if cleanup_errors:
+            raise ExportError("Export temporary-file cleanup failed: " + "; ".join(cleanup_errors))
 
 
 def is_stale(out_dir=EXPORT_DIR):
-    """True when brief.json is missing, unreadable, or not from today."""
+    """True unless today's complete export set matches its final manifest."""
+    out_dir = Path(out_dir)
     try:
-        brief = json.loads((out_dir / "brief.json").read_text(encoding="utf-8"))
+        manifest_bytes = (out_dir / "manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != MANIFEST_VERSION:
+            return True
+        if manifest.get("date") != dt.date.today().isoformat():
+            return True
+        hashes = manifest.get("files")
+        if not isinstance(hashes, dict) or set(hashes) != set(EXPORT_NAMES):
+            return True
+        contents = {name: (out_dir / name).read_bytes() for name in EXPORT_NAMES}
+        if any(hashlib.sha256(content).hexdigest() != hashes[name] for name, content in contents.items()):
+            return True
+        brief = json.loads(contents["brief.json"])
+        review = json.loads(contents["review.json"])
+        if not isinstance(brief, dict) or not isinstance(review, dict):
+            return True
+        if brief.get("date") != manifest["date"] or brief.get("schema_version") != SCHEMA_VERSION:
+            return True
+        if review.get("schema_version") != REVIEW_SCHEMA_VERSION:
+            return True
+        stamp = manifest.get("generated_at")
+        if not isinstance(stamp, str) or brief.get("generated_at") != stamp or review.get("generated_at") != stamp:
+            return True
+        # If a writer changed the manifest while we read, retry on the next run.
+        return (out_dir / "manifest.json").read_bytes() != manifest_bytes
     except (OSError, ValueError):
         return True
-    return brief.get("date") != dt.date.today().isoformat()
