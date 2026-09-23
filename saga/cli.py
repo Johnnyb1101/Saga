@@ -230,6 +230,50 @@ def fmt_number(value):
         return f"{int(value):,}"
     return f"{value:,}"
 
+
+def cmd_completions(args):
+    with closing(db.connect(args.db)) as con:
+        if args.duty is not None:
+            require_duty(con, args.duty)
+        rows = reads.completion_list(con, args.since, args.until, args.duty)
+        if not rows:
+            print("No completions in this period.")
+        for row in rows:
+            print(f"  {row['id']:>4}  {row['completed_at']}  [{row['category']}] "
+                  f"{row['outcome'] or row['task_title'] or '(no outcome)'} "
+                  f"[context: {row['snapshot_source']}]")
+
+
+def cmd_history(args):
+    with closing(db.connect(args.db)) as con:
+        rows = reads.completion_history(con, args.completion_id)
+        if not rows:
+            raise ValueError(f"No completion with id {args.completion_id}.")
+        for row in rows:
+            print(f"COMPLETION {row['id']}" + (" (current)" if row['id'] == rows[-1]['id'] else " (superseded)"))
+            for field in ("supersedes_id", "recorded_at", "correction_reason", "snapshot_source", "task_id",
+                          *writes.CORRECTION_FIELDS):
+                print(f"  {field}: {row[field] if row[field] is not None else '-'}")
+
+
+def cmd_correct(args):
+    changes = {field: getattr(args, field) for field in writes.CORRECTION_FIELDS
+               if hasattr(args, field)}
+    if args.date is not None:
+        changes["completed_at"] = completion_timestamp(args.date)
+    if "due_date" in changes and changes["due_date"] is not None:
+        value = changes["due_date"]
+        if dt.date.fromisoformat(value).isoformat() != value:
+            raise ValueError("due date must be YYYY-MM-DD")
+    if args.clear_measure:
+        if "measure" in changes or "quantity" in changes:
+            raise ValueError("--clear-measure cannot be combined with --measure or --quantity")
+        changes.update(measure=None, quantity=None)
+    with closing(db.connect(args.db)) as con:
+        revision = writes.correct_completion(con, args.completion_id, args.reason, **changes)
+        print(f"Logged correction {revision}, superseding completion {args.completion_id}.")
+        maybe_export(args, con)
+
 def plural(count, word):
     """`word`, pluralised for `count`."""
     return word if count == 1 else word + "s"
@@ -330,7 +374,8 @@ def cmd_review(args):
         detail = ""
         if row["measure"]:
             detail = f"   [{row['measure']}: {fmt_number(row['quantity'])}]"
-        print(f"  {row['completed_at'][:10]}  {row['outcome']}{detail}")
+        context = " [backfilled context]" if row["snapshot_source"] == "backfilled" else ""
+        print(f"  {row['id']:>4}  {row['completed_at'][:10]}  {row['outcome'] or row['task_title'] or '(no outcome)'}{detail}{context}")
 
 def refresh_if_stale(args):
     """Bring exports/ forward when they are not from today.
@@ -467,6 +512,35 @@ def build_parser():
     p.add_argument("--flag", action="store_true", help="mark as review material")
     p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
     p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("completions", help="list current accomplishments with ids")
+    p.add_argument("--since", metavar="DATE")
+    p.add_argument("--until", metavar="DATE")
+    p.add_argument("--duty", metavar="NAME")
+    p.set_defaults(func=cmd_completions)
+
+    p = sub.add_parser("history", help="show every revision of an accomplishment")
+    p.add_argument("completion_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_history)
+
+    p = sub.add_parser("correct", help="append a correction without changing the original",
+                       description="Use the latest id from completions. Omitted fields are preserved.")
+    p.add_argument("completion_id", type=int, metavar="ID")
+    p.add_argument("--reason", required=True, help="why this correction is needed")
+    p.add_argument("--outcome", default=argparse.SUPPRESS)
+    p.add_argument("-c", "--category", default=argparse.SUPPRESS)
+    p.add_argument("--date", metavar="DATE")
+    for name in ("duty", "task-title", "project-name", "due-date"):
+        group = p.add_mutually_exclusive_group()
+        group.add_argument(f"--{name}", default=argparse.SUPPRESS)
+        group.add_argument(f"--clear-{name}", dest=name.replace('-', '_'),
+                           action="store_const", const=None, default=argparse.SUPPRESS)
+    p.add_argument("--measure", default=argparse.SUPPRESS)
+    p.add_argument("--quantity", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--clear-measure", action="store_true", help="remove both measure and quantity")
+    p.add_argument("--flag", dest="flagged", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
+    p.add_argument("--review-counting", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_correct)
 
     p = sub.add_parser("upcoming", help="project deadlines approaching",
                        description="Active projects with a deadline inside the window, "

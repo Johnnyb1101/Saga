@@ -110,6 +110,9 @@ python main.py upcoming [--days 30]     # project deadlines approaching
 python main.py project "name" [--deadline DATE]
 python main.py measure ["NAME"]         # list measures, or register one
 python main.py review [--since DATE] [--until DATE]
+python main.py completions [--since DATE] [--until DATE] [--duty NAME]
+python main.py history ID               # all revisions of a completion
+python main.py correct ID --reason "..." --outcome "..."
 python main.py export [--out DIR]       # regenerate exports/
 python main.py backup --out DIR         # create a verified database snapshot
 
@@ -137,6 +140,59 @@ An explicit date is stored at midnight local time; omitted dates use the
 current timestamp. Invalid or future completion dates are rejected. For
 `done`, supplying only an id and date still prompts for accomplishment details.
 Backdating records when work happened; it does not edit an existing completion.
+
+## Historical context and corrections
+
+New completions save the task title, due date, project name, and category's
+review eligibility at capture time. Later edits to working tasks, projects,
+or category eligibility do not change those saved values or historical
+on-time results. Category, duty, and measure names already referenced by the
+archive cannot be renamed: their cascading update would rewrite evidence.
+
+Use `completions` to find the latest completion id, then append a correction:
+
+```powershell
+python main.py completions --since 2026-09-01 --duty "Operations"
+python main.py correct 12 --reason "Recounted completed packages" --quantity 8
+python main.py history 12
+```
+
+Completion ids are separate from task ids. Each correction gets a new id,
+links to the revision it replaces, and records its reason and entry time.
+Correct the latest id; `history` accepts any id in the chain and shows every
+revision. Originals are retained, with database guards against updates,
+deletes, and replacement inserts. These guards prevent ordinary accidental
+edits; they do not make the database tamper-proof against an administrator.
+
+Reports, exports, measure usage, and duty usage count only the latest
+revision. Filtering happens after superseded rows are excluded, so changing
+a completion date or duty also removes the old revision from its former
+period or duty. Corrections do not reopen or otherwise change tasks.
+
+`correct` preserves omitted fields. It supports `--outcome`, `--category`,
+`--date`, `--duty`, `--measure`, `--quantity`, `--flag` / `--no-flag`,
+`--task-title`, `--due-date`, `--project-name`, and
+`--review-counting` / `--no-review-counting`. Use `--clear-duty`,
+`--clear-task-title`, `--clear-due-date`, or `--clear-project-name` to remove
+optional context. `--clear-measure` removes both the measure and quantity.
+The resulting record must have a nonblank outcome and a complete measure /
+quantity pair. Empty reasons, unchanged corrections, and stale ids are rejected.
+Changing category uses that category's current review eligibility unless
+explicitly overridden; other corrections preserve the saved eligibility.
+
+Existing databases require `python main.py migrate` for schema version 2.
+Migration keeps original completion fields intact and backfills context
+from the tasks, projects, and categories as they exist **at migration time**.
+It cannot reconstruct earlier values. Those rows are marked `backfilled`,
+and their original entry time remains unknown. Corrections retain that
+provenance; their reason documents any corrected historical context.
+New records are marked `captured`, including backdated work entered today.
+`recorded_at` is the entry time; `completed_at` is when the work happened.
+
+After migrating, run `python main.py export` to regenerate existing exports.
+The review JSON format is now version 2: flagged items include snapshot
+provenance and predecessor ids, and totals count current revisions only.
+The brief JSON format remains version 1.
 
 ## Backup and recovery
 
@@ -237,9 +293,11 @@ development tool. On Windows, run:
 
 Tests use invented records in temporary or in-memory databases. They cover
 backup recovery, capture, completion rollback, date boundaries, review
-filters, migration preservation, and exports. The version-zero schema in
+filters, immutable snapshots, correction chains, migration preservation,
+and exports. The version-zero schema in
 `tests/fixtures/schema_v0.sql` is frozen from commit `7ff0f99^`; keep it
-independent of the current schema. Migration tests also inject failures to
+independent of the current schema. `tests/fixtures/schema_v1.sql` preserves
+the schema before archive history was introduced. Migration tests also inject failures to
 verify rollback of schema, records, and version, and successful retry.
 Atomic export publication is not established by these tests.
 

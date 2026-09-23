@@ -11,6 +11,7 @@ import json
 from saga import analytics, db, reads
 
 SCHEMA_VERSION = 1
+REVIEW_SCHEMA_VERSION = 2
 EXPORT_DIR = db.ROOT / "exports"
 SOON_DAYS = 14
 DEADLINE_DAYS = 30
@@ -41,7 +42,7 @@ def build_brief(con, soon_days=SOON_DAYS, deadline_days=DEADLINE_DAYS):
 def build_review(con, since=None, until=None):
     """The archive view: totals and flagged work for a period."""
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": REVIEW_SCHEMA_VERSION,
         "generated_at": now(),
         "since": since,
         "until": until,

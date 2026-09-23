@@ -47,7 +47,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(brief["date"], "2020-02-29")
         for section, title in (("overdue", "Overdue"), ("due_today", "Due today"), ("due_soon", "Café task")):
             self.assertEqual([r["title"] for r in brief[section]], [title])
-        self.assertEqual(review["schema_version"], 1)
+        self.assertEqual(review["schema_version"], 2)
         self.assertEqual((review["since"], review["until"]), ("2020-02-29", "2020-02-29"))
         self.assertEqual(review["volume"]["completions"], 1)
         self.assertEqual([r["outcome"] for r in review["flagged"]], ["Résumé reviewed"])

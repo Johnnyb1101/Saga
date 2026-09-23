@@ -17,7 +17,7 @@ DB_PATH = ROOT / "data" / "saga.db"
 SCHEMA_PATH = HERE / "schema.sql"
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _open(db_path):

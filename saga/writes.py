@@ -49,11 +49,17 @@ def _insert_completion(con, task_id, category, outcome, measure, quantity,
         """
         INSERT INTO completions
             (task_id, category, completed_at, outcome, measure, quantity,
-             flagged, duty)
-        VALUES (?, ?, COALESCE(?, datetime('now', 'localtime')), ?, ?, ?, ?, ?)
+             flagged, duty, task_title, due_date, project_name, review_counting,
+             recorded_at)
+        VALUES (?, ?, COALESCE(?, datetime('now', 'localtime')), ?, ?, ?, ?, ?,
+                (SELECT title FROM tasks WHERE id = ?),
+                (SELECT due_date FROM tasks WHERE id = ?),
+                (SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ?),
+                (SELECT counts_toward_review FROM categories WHERE name = ?),
+                datetime('now', 'localtime'))
         """,
         (task_id, category, completed_at, outcome, measure, quantity,
-         int(flagged), duty),
+         int(flagged), duty, task_id, task_id, task_id, category),
     )
 
 def add_completion(con, category, outcome=None, measure=None, quantity=None,
@@ -81,4 +87,46 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
                                  measure, quantity, flagged, completed_at,
                                  task["duty"] if duty is None else duty)
         con.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (task_id,))
+    return cur.lastrowid
+
+
+CORRECTION_FIELDS = (
+    "category", "completed_at", "outcome", "measure", "quantity", "flagged", "duty",
+    "task_title", "due_date", "project_name", "review_counting",
+)
+
+
+def correct_completion(con, completion_id, reason, **changes):
+    """Append a replacement of the latest revision, retaining all original rows."""
+    if not reason or not reason.strip():
+        raise ValueError("a nonblank correction reason is required")
+    if not changes or set(changes) - set(CORRECTION_FIELDS):
+        raise ValueError("supply supported fields to correct")
+    with con:
+        original = con.execute(
+            "SELECT * FROM current_completions WHERE id = ?", (completion_id,)
+        ).fetchone()
+        if original is None:
+            raise ValueError(f"Completion {completion_id} is missing or superseded; use completions/history to find its latest id.")
+        values = dict(original)
+        values.update(changes)
+        if not values["outcome"] or not values["outcome"].strip():
+            raise ValueError("a corrected completion must have a nonblank outcome")
+        if "category" in changes and changes["category"] != original["category"] and "review_counting" not in changes:
+            category = con.execute("SELECT counts_toward_review FROM categories WHERE name=?",
+                                   (changes["category"],)).fetchone()
+            if category is None:
+                raise ValueError("no such category")
+            values["review_counting"] = category[0]
+        if all(values[field] == original[field] for field in CORRECTION_FIELDS):
+            raise ValueError("correction does not change any recorded evidence")
+        cur = con.execute(
+            """INSERT INTO completions
+                (task_id, category, completed_at, outcome, measure, quantity, flagged, duty,
+                 task_title, due_date, project_name, review_counting, snapshot_source,
+                 recorded_at, supersedes_id, correction_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)""",
+            (values["task_id"], *(values[field] for field in CORRECTION_FIELDS),
+             values["snapshot_source"], completion_id, reason.strip()),
+        )
     return cur.lastrowid
