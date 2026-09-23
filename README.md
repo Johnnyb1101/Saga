@@ -239,8 +239,15 @@ Tests use invented records in temporary or in-memory databases. They cover
 backup recovery, capture, completion rollback, date boundaries, review
 filters, migration preservation, and exports. The version-zero schema in
 `tests/fixtures/schema_v0.sql` is frozen from commit `7ff0f99^`; keep it
-independent of the current schema. Migration failure atomicity and atomic
-export publication are not established by these tests.
+independent of the current schema. Migration tests also inject failures to
+verify rollback of schema, records, and version, and successful retry.
+Atomic export publication is not established by these tests.
+
+Migrations commit one at a time, after checking their resulting schema
+version. A failing migration rolls back completely; earlier successful
+migrations remain applied. Each migration run retains a uniquely named
+pre-migration backup. Migration SQL must leave transaction control to the
+runner: do not include `BEGIN`, `COMMIT`, or `ROLLBACK` statements.
 
 ## License
 
