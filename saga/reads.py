@@ -12,6 +12,36 @@ def get_task(con, task_id):
         "SELECT * FROM tasks WHERE id = ?", (task_id,)
     ).fetchone()
 
+
+def completion_list(con, since=None, until=None, duty=None):
+    """Latest revisions only, with ids for inspection and correction."""
+    return con.execute(
+        """SELECT * FROM current_completions
+           WHERE (? IS NULL OR date(completed_at) >= ?)
+             AND (? IS NULL OR date(completed_at) <= ?)
+             AND (? IS NULL OR duty = ?)
+           ORDER BY completed_at DESC, id DESC""",
+        (since, since, until, until, duty, duty),
+    ).fetchall()
+
+
+def completion_history(con, completion_id):
+    """The entire revision chain, starting from any id in that chain."""
+    return con.execute(
+        """WITH RECURSIVE
+           ancestors AS (
+               SELECT * FROM completions WHERE id = ?
+               UNION ALL
+               SELECT c.* FROM completions c JOIN ancestors a ON c.id = a.supersedes_id
+           ),
+           history AS (
+               SELECT * FROM ancestors WHERE supersedes_id IS NULL
+               UNION ALL
+               SELECT c.* FROM completions c JOIN history h ON c.supersedes_id = h.id
+           )
+           SELECT * FROM history ORDER BY id""", (completion_id,),
+    ).fetchall()
+
 def open_tasks(con, category=None):
     """Every open task, optionally filtered by category. Undated ones last."""
     return con.execute(
@@ -23,6 +53,32 @@ def open_tasks(con, category=None):
         """,
         (category, category),
     ).fetchall()
+
+def projects(con):
+    """Every project, including undated and closed projects, with task counts."""
+    return con.execute(
+        """SELECT p.id, p.name, p.status, p.deadline, count(t.id) AS open_tasks
+           FROM projects p
+           LEFT JOIN tasks t ON t.project_id=p.id AND t.status='open'
+           GROUP BY p.id
+           ORDER BY p.deadline IS NULL, p.deadline, p.id"""
+    ).fetchall()
+
+
+def recurrences(con):
+    """All schedules, with their one open instance if present."""
+    return con.execute(
+        """SELECT r.*, t.id AS task_id, t.due_date, t.occurrence_index
+           FROM recurrences r
+           LEFT JOIN tasks t ON t.recurrence_id=r.id AND t.status='open'
+           ORDER BY r.id"""
+    ).fetchall()
+
+
+def open_occurrence(con, recurrence_id):
+    return con.execute("SELECT * FROM tasks WHERE recurrence_id=? AND status='open'",
+                       (recurrence_id,)).fetchone()
+
 
 def due_today(con, on=None):
     """Open tasks due on the given day. Defaults to today."""
@@ -98,7 +154,7 @@ def measure_usage(con):
                count(c.id)     AS occasions,
                sum(c.quantity) AS total
         FROM measures m
-        LEFT JOIN completions c ON c.measure = m.name
+        LEFT JOIN current_completions c ON c.measure = m.name
         GROUP BY m.name
         ORDER BY occasions DESC, m.name
         """
@@ -121,7 +177,7 @@ def duty_usage(con):
         SELECT d.name,
                count(c.id) AS completions
         FROM duties d
-        LEFT JOIN completions c ON c.duty = d.name
+        LEFT JOIN current_completions c ON c.duty = d.name
         GROUP BY d.name
         ORDER BY completions DESC, d.name
         """

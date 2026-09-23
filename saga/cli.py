@@ -8,6 +8,7 @@ import argparse
 import datetime as dt
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 from saga import analytics, db, export, reads, writes
@@ -27,7 +28,8 @@ def print_tasks(rows, mode=None):
             extra = f"{-days_between(row['due_date']):>3}d       "
         elif mode == "date":
             extra = f"{row['due_date'] or '':<12}"
-        print(f"  {row['id']:>4}  {row['category']:<9}{extra}{row['title']}")
+        repeat = f" [series {row['recurrence_id']}]" if row["recurrence_id"] is not None else ""
+        print(f"  {row['id']:>4}  {row['category']:<9}{extra}{row['title']}{repeat}")
 
 CONSTRAINT_HELP = {
     "date(": "dates must be YYYY-MM-DD with zero padding, e.g. 2026-09-04",
@@ -87,8 +89,12 @@ def cmd_add(args):
         due = ask("Due date (YYYY-MM-DD, blank for none)")
 
     task_id = writes.add_task(con, text, category,
-                              project_id=args.project, due_date=due, duty=duty)
+                              project_id=args.project, due_date=due, duty=duty,
+                              repeat=args.repeat, interval=args.interval)
     print(f"Added task {task_id}: {text}")
+    if args.repeat:
+        task = reads.get_task(con, task_id)
+        print(f"Recurring series {task['recurrence_id']}: every {args.interval} {args.repeat} interval(s).")
     maybe_export(args, con)
 
 def cmd_project(args):
@@ -147,7 +153,51 @@ def require_duty(con, duty):
         listed = ", ".join(names) or "none are registered"
         raise ValueError(f"No duty named {duty!r}. Registered: {listed}")
 
+def completion_timestamp(value):
+    """Validate a completion day and represent an explicit date at midnight."""
+    if value is None:
+        return None
+    try:
+        day = dt.date.fromisoformat(value)
+    except ValueError:
+        raise ValueError("completion date must be YYYY-MM-DD") from None
+    if day.isoformat() != value:
+        raise ValueError("completion date must be YYYY-MM-DD")
+    if day > dt.date.today():
+        raise ValueError("completion date cannot be in the future")
+    return f"{value} 00:00:00"
+
+
+def cmd_log(args):
+    completed_at = completion_timestamp(args.date)
+    guided = args.outcome is None
+    outcome = ask("Outcome") if guided else args.outcome
+    if not outcome or not outcome.strip():
+        raise ValueError("an outcome is required for a standalone accomplishment")
+    with closing(db.connect(args.db)) as con:
+        category = args.category
+        if category is None:
+            category = ask_choice("Category", [r["name"] for r in reads.categories(con)])
+        if guided and args.date is None:
+            completed_at = completion_timestamp(ask("Completion date (YYYY-MM-DD, blank for now)"))
+        measure, quantity = args.measure, args.quantity
+        duty, flagged = args.duty, args.flag
+        if guided:
+            if measure is None and quantity is None:
+                measure, quantity = ask_measure(con)
+            if duty is None:
+                duty = ask_duty(con)
+            if not flagged:
+                flagged = ask_yes_no("Review material?")
+        completion_id = writes.add_completion(
+            con, category, outcome=outcome.strip(), measure=measure,
+            quantity=quantity, flagged=flagged, completed_at=completed_at, duty=duty)
+        print(f"Logged completion {completion_id}.")
+        maybe_export(args, con)
+
+
 def cmd_done(args):
+    completed_at = completion_timestamp(args.date)
     con = db.connect(args.db)
     task = reads.get_task(con, args.task_id)
     if task is None:
@@ -175,8 +225,12 @@ def cmd_done(args):
 
     completion_id = writes.complete_task(
         con, task["id"], outcome=outcome, measure=measure,
-        quantity=quantity, flagged=flagged, duty=duty)
+        quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at)
     print(f"Logged completion {completion_id}.")
+    if task["recurrence_id"] is not None:
+        following = reads.open_occurrence(con, task["recurrence_id"])
+        if following is not None:
+            print(f"Next task {following['id']}: due {following['due_date']} (series {task['recurrence_id']}).")
     maybe_export(args, con)
 
 def fmt_number(value):
@@ -184,6 +238,50 @@ def fmt_number(value):
     if value == int(value):
         return f"{int(value):,}"
     return f"{value:,}"
+
+
+def cmd_completions(args):
+    with closing(db.connect(args.db)) as con:
+        if args.duty is not None:
+            require_duty(con, args.duty)
+        rows = reads.completion_list(con, args.since, args.until, args.duty)
+        if not rows:
+            print("No completions in this period.")
+        for row in rows:
+            print(f"  {row['id']:>4}  {row['completed_at']}  [{row['category']}] "
+                  f"{row['outcome'] or row['task_title'] or '(no outcome)'} "
+                  f"[context: {row['snapshot_source']}]")
+
+
+def cmd_history(args):
+    with closing(db.connect(args.db)) as con:
+        rows = reads.completion_history(con, args.completion_id)
+        if not rows:
+            raise ValueError(f"No completion with id {args.completion_id}.")
+        for row in rows:
+            print(f"COMPLETION {row['id']}" + (" (current)" if row['id'] == rows[-1]['id'] else " (superseded)"))
+            for field in ("supersedes_id", "recorded_at", "correction_reason", "snapshot_source", "task_id",
+                          *writes.CORRECTION_FIELDS):
+                print(f"  {field}: {row[field] if row[field] is not None else '-'}")
+
+
+def cmd_correct(args):
+    changes = {field: getattr(args, field) for field in writes.CORRECTION_FIELDS
+               if hasattr(args, field)}
+    if args.date is not None:
+        changes["completed_at"] = completion_timestamp(args.date)
+    if "due_date" in changes and changes["due_date"] is not None:
+        value = changes["due_date"]
+        if dt.date.fromisoformat(value).isoformat() != value:
+            raise ValueError("due date must be YYYY-MM-DD")
+    if args.clear_measure:
+        if "measure" in changes or "quantity" in changes:
+            raise ValueError("--clear-measure cannot be combined with --measure or --quantity")
+        changes.update(measure=None, quantity=None)
+    with closing(db.connect(args.db)) as con:
+        revision = writes.correct_completion(con, args.completion_id, args.reason, **changes)
+        print(f"Logged correction {revision}, superseding completion {args.completion_id}.")
+        maybe_export(args, con)
 
 def plural(count, word):
     """`word`, pluralised for `count`."""
@@ -285,7 +383,8 @@ def cmd_review(args):
         detail = ""
         if row["measure"]:
             detail = f"   [{row['measure']}: {fmt_number(row['quantity'])}]"
-        print(f"  {row['completed_at'][:10]}  {row['outcome']}{detail}")
+        context = " [backfilled context]" if row["snapshot_source"] == "backfilled" else ""
+        print(f"  {row['id']:>4}  {row['completed_at'][:10]}  {row['outcome'] or row['task_title'] or '(no outcome)'}{detail}{context}")
 
 def refresh_if_stale(args):
     """Bring exports/ forward when they are not from today.
@@ -312,6 +411,15 @@ def cmd_export(args):
 
 def cmd_init(args):
     print(f"Created {db.init_db(args.db)}")
+
+
+def cmd_backup(args):
+    try:
+        path = db.backup(args.db, args.out)
+    except (OSError, sqlite3.Error) as exc:
+        raise ValueError(f"Backup failed: {exc}") from exc
+    print(f"Verified backup: {path}")
+
 
 def cmd_migrate(args):
     for line in db.migrate(args.db) or ["Already up to date."]:
@@ -358,6 +466,58 @@ def cmd_upcoming(args):
         print(f"  {row['days_left']:>4}d  {row['deadline']}  "
               f"{row['name']:<38}{row['open_tasks']} open")
 
+def cmd_cancel(args):
+    with closing(db.connect(args.db)) as con:
+        writes.cancel_task(con, args.task_id)
+        print(f"Cancelled task {args.task_id}.")
+        task = reads.get_task(con, args.task_id)
+        if task["recurrence_id"] is not None:
+            print(f"Stopped recurring series {task['recurrence_id']}.")
+        maybe_export(args, con)
+
+
+def cmd_reschedule(args):
+    with closing(db.connect(args.db)) as con:
+        writes.reschedule_task(con, args.task_id, args.due)
+        print(f"Task {args.task_id}: due date {args.due or 'cleared'}.")
+        maybe_export(args, con)
+
+
+def cmd_projects(args):
+    with closing(db.connect(args.db)) as con:
+        rows = reads.projects(con)
+        if not rows:
+            print("No projects.")
+        for row in rows:
+            print(f"  {row['id']:>4}  {row['status']:<10} {row['deadline'] or '-':<10} "
+                  f"{row['open_tasks']} open  {row['name']}")
+
+
+def cmd_close_project(args):
+    with closing(db.connect(args.db)) as con:
+        writes.close_project(con, args.project_id)
+        print(f"Closed project {args.project_id}.")
+        maybe_export(args, con)
+
+
+def cmd_recurrences(args):
+    with closing(db.connect(args.db)) as con:
+        rows = reads.recurrences(con)
+        if not rows:
+            print("No recurring series.")
+        for row in rows:
+            current = f"task {row['task_id']}, due {row['due_date'] or 'undated'}" if row["task_id"] is not None else "no open task"
+            print(f"  {row['id']:>4}  {row['status']:<7}  {row['frequency']} every {row['interval']} "
+                  f"from {row['anchor_date']}  {row['title']}  ({current})")
+
+
+def cmd_stop_recurrence(args):
+    with closing(db.connect(args.db)) as con:
+        writes.stop_recurrence(con, args.recurrence_id)
+        print(f"Stopped recurring series {args.recurrence_id}; its current task is retained.")
+        maybe_export(args, con)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="saga",
@@ -382,6 +542,31 @@ def build_parser():
     p.add_argument("-c", "--category", help="only this category")
     p.set_defaults(func=cmd_list)
 
+    p = sub.add_parser("cancel", help="cancel an open task without recording a completion")
+    p.add_argument("task_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_cancel)
+
+    p = sub.add_parser("reschedule", help="change or clear an open task's due date")
+    p.add_argument("task_id", type=int, metavar="ID")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--due", metavar="DATE", help="new due date, YYYY-MM-DD")
+    group.add_argument("--clear-due", dest="due", action="store_const", const=None)
+    p.set_defaults(func=cmd_reschedule)
+
+    p = sub.add_parser("projects", help="list all projects with ids and open-task counts")
+    p.set_defaults(func=cmd_projects)
+
+    p = sub.add_parser("close-project", help="close a project with no open tasks")
+    p.add_argument("project_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_close_project)
+
+    p = sub.add_parser("recurrences", help="list recurring schedules and current task ids")
+    p.set_defaults(func=cmd_recurrences)
+
+    p = sub.add_parser("stop-recurrence", help="stop a schedule while retaining its current task")
+    p.add_argument("recurrence_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_stop_recurrence)
+
     p = sub.add_parser("add", help="add a task",
                        description="Add a task. Run it bare to be prompted for everything.")
     p.add_argument("text", nargs="?", help="what the task is")
@@ -389,6 +574,8 @@ def build_parser():
     p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--due", metavar="DATE", help="due date, YYYY-MM-DD")
     p.add_argument("--project", type=int, metavar="ID", help="project id")
+    p.add_argument("--repeat", choices=("daily", "weekly", "monthly"), help="repeat from the first due date")
+    p.add_argument("--interval", type=int, default=1, metavar="N", help="positive number of repeat units (default: 1)")
     p.set_defaults(func=cmd_add)
 
     p = sub.add_parser("done", help="complete a task",
@@ -400,7 +587,48 @@ def build_parser():
     p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--quantity", type=float, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
+    p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
     p.set_defaults(func=cmd_done)
+
+    p = sub.add_parser("log", help="record an accomplishment without a task",
+                       description="Archive unplanned work. Run bare for guided entry.")
+    p.add_argument("outcome", nargs="?", help="what happened (required, or prompted)")
+    p.add_argument("-c", "--category", help="category name")
+    p.add_argument("--duty", metavar="NAME", help="a registered duty")
+    p.add_argument("--measure", metavar="NAME", help="a registered measure")
+    p.add_argument("--quantity", type=float, metavar="N", help="how many")
+    p.add_argument("--flag", action="store_true", help="mark as review material")
+    p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
+    p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("completions", help="list current accomplishments with ids")
+    p.add_argument("--since", metavar="DATE")
+    p.add_argument("--until", metavar="DATE")
+    p.add_argument("--duty", metavar="NAME")
+    p.set_defaults(func=cmd_completions)
+
+    p = sub.add_parser("history", help="show every revision of an accomplishment")
+    p.add_argument("completion_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_history)
+
+    p = sub.add_parser("correct", help="append a correction without changing the original",
+                       description="Use the latest id from completions. Omitted fields are preserved.")
+    p.add_argument("completion_id", type=int, metavar="ID")
+    p.add_argument("--reason", required=True, help="why this correction is needed")
+    p.add_argument("--outcome", default=argparse.SUPPRESS)
+    p.add_argument("-c", "--category", default=argparse.SUPPRESS)
+    p.add_argument("--date", metavar="DATE")
+    for name in ("duty", "task-title", "project-name", "due-date"):
+        group = p.add_mutually_exclusive_group()
+        group.add_argument(f"--{name}", default=argparse.SUPPRESS)
+        group.add_argument(f"--clear-{name}", dest=name.replace('-', '_'),
+                           action="store_const", const=None, default=argparse.SUPPRESS)
+    p.add_argument("--measure", default=argparse.SUPPRESS)
+    p.add_argument("--quantity", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--clear-measure", action="store_true", help="remove both measure and quantity")
+    p.add_argument("--flag", dest="flagged", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
+    p.add_argument("--review-counting", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_correct)
 
     p = sub.add_parser("upcoming", help="project deadlines approaching",
                        description="Active projects with a deadline inside the window, "
@@ -448,6 +676,13 @@ def build_parser():
     p.add_argument("--since", metavar="DATE", help="review period start, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="review period end, YYYY-MM-DD")
     p.set_defaults(func=cmd_export, refresh=False)
+
+    p = sub.add_parser("backup", help="create a verified database snapshot",
+                       description="Back up with SQLite's backup API and verify "
+                                   "the copy. Does not refresh exports.")
+    p.add_argument("--out", type=Path, required=True, metavar="DIR",
+                   help="backup directory (prefer a separate drive or synced folder)")
+    p.set_defaults(func=cmd_backup, refresh=False)
 
     p = sub.add_parser("init", help="create the database (first run only)",
                        description="Create a new database. Refuses if one already exists.")

@@ -15,7 +15,7 @@ def measure_totals(con, since=None, until=None, duty=None):
         SELECT measure,
                sum(quantity) AS total,
                count(*)      AS occasions
-        FROM completions
+        FROM current_completions
         WHERE measure IS NOT NULL
           AND (? IS NULL OR date(completed_at) >= ?)
           AND (? IS NULL OR date(completed_at) <= ?)
@@ -31,11 +31,10 @@ def volume(con, since=None, until=None, duty=None):
     return con.execute(
         """
         SELECT count(*)                                            AS completions,
-               count(*) FILTER (WHERE k.counts_toward_review = 1)  AS review_counting,
+               count(*) FILTER (WHERE c.review_counting = 1)       AS review_counting,
                count(*) FILTER (WHERE c.flagged = 1)               AS flagged,
                count(c.quantity)                                   AS with_a_number
-        FROM completions c
-        JOIN categories k ON k.name = c.category
+        FROM current_completions c
         WHERE (? IS NULL OR date(c.completed_at) >= ?)
           AND (? IS NULL OR date(c.completed_at) <= ?)
           AND (? IS NULL OR c.duty = ?)
@@ -52,7 +51,7 @@ def completions_by_category(con, since=None, until=None, duty=None):
                count(c.quantity)                        AS with_a_number,
                count(c.id) FILTER (WHERE c.flagged = 1) AS flagged
         FROM categories k
-        LEFT JOIN completions c
+        LEFT JOIN current_completions c
                ON c.category = k.name
               AND (? IS NULL OR date(c.completed_at) >= ?)
               AND (? IS NULL OR date(c.completed_at) <= ?)
@@ -64,17 +63,16 @@ def completions_by_category(con, since=None, until=None, duty=None):
     ).fetchall()
 
 def on_time_rate(con, since=None, until=None, duty=None):
-    """On-time percentage by category, over tasks that actually had a due date."""
+    """On-time percentage by category, using saved completion deadlines."""
     return con.execute(
         """
         SELECT c.category,
                count(*)                                                  AS evaluated,
-               count(*) FILTER (WHERE date(c.completed_at) <= t.due_date) AS on_time,
-               round(100.0 * count(*) FILTER (WHERE date(c.completed_at) <= t.due_date)
+               count(*) FILTER (WHERE date(c.completed_at) <= c.due_date) AS on_time,
+               round(100.0 * count(*) FILTER (WHERE date(c.completed_at) <= c.due_date)
                      / count(*), 1)                                      AS pct
-        FROM completions c
-        JOIN tasks t ON t.id = c.task_id
-        WHERE t.due_date IS NOT NULL
+        FROM current_completions c
+        WHERE c.due_date IS NOT NULL
           AND (? IS NULL OR date(c.completed_at) >= ?)
           AND (? IS NULL OR date(c.completed_at) <= ?)
           AND (? IS NULL OR c.duty = ?)
@@ -95,11 +93,11 @@ def flagged_work(con, since=None, until=None, duty=None):
                c.measure,
                c.quantity,
                c.duty,
-               t.title AS task_title,
-               p.name  AS project_name
-        FROM completions c
-        LEFT JOIN tasks t    ON t.id = c.task_id
-        LEFT JOIN projects p ON p.id = t.project_id
+               c.task_title,
+               c.project_name,
+               c.snapshot_source,
+               c.supersedes_id
+        FROM current_completions c
         WHERE c.flagged = 1
           AND (? IS NULL OR date(c.completed_at) >= ?)
           AND (? IS NULL OR date(c.completed_at) <= ?)
