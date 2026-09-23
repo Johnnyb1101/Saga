@@ -447,10 +447,23 @@ Use a virtual environment created with Python 3.14 and install Ruff as a
 development tool. On Windows, run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install ruff
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m ruff check --no-cache .
 ```
+
+GitHub Actions runs the full test suite and Ruff on Windows with the latest
+available Python 3.14 patch for pushes and pull requests. The stable check
+name is `Tests and lint`. Dependabot checks weekly for updates to the pinned
+development tools and GitHub Actions; update pull requests use the same CI.
+Updates are reviewed and merged manually.
+
+Merge enforcement requires a separate GitHub branch-protection setting;
+the workflow file alone does not block merging. After the first successful
+GitHub run, require `Tests and lint` on `main` and require branches to be
+up to date before merging. Keep that check name stable when editing CI.
+Dependabot begins scheduled updates once its configuration is on the
+default branch.
 
 Tests use invented records in temporary or in-memory databases. They cover
 backup recovery, capture, completion rollback, date boundaries, review
