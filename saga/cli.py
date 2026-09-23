@@ -8,6 +8,7 @@ import argparse
 import datetime as dt
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 from saga import analytics, db, export, reads, writes
@@ -147,7 +148,51 @@ def require_duty(con, duty):
         listed = ", ".join(names) or "none are registered"
         raise ValueError(f"No duty named {duty!r}. Registered: {listed}")
 
+def completion_timestamp(value):
+    """Validate a completion day and represent an explicit date at midnight."""
+    if value is None:
+        return None
+    try:
+        day = dt.date.fromisoformat(value)
+    except ValueError:
+        raise ValueError("completion date must be YYYY-MM-DD") from None
+    if day.isoformat() != value:
+        raise ValueError("completion date must be YYYY-MM-DD")
+    if day > dt.date.today():
+        raise ValueError("completion date cannot be in the future")
+    return f"{value} 00:00:00"
+
+
+def cmd_log(args):
+    completed_at = completion_timestamp(args.date)
+    guided = args.outcome is None
+    outcome = ask("Outcome") if guided else args.outcome
+    if not outcome or not outcome.strip():
+        raise ValueError("an outcome is required for a standalone accomplishment")
+    with closing(db.connect(args.db)) as con:
+        category = args.category
+        if category is None:
+            category = ask_choice("Category", [r["name"] for r in reads.categories(con)])
+        if guided and args.date is None:
+            completed_at = completion_timestamp(ask("Completion date (YYYY-MM-DD, blank for now)"))
+        measure, quantity = args.measure, args.quantity
+        duty, flagged = args.duty, args.flag
+        if guided:
+            if measure is None and quantity is None:
+                measure, quantity = ask_measure(con)
+            if duty is None:
+                duty = ask_duty(con)
+            if not flagged:
+                flagged = ask_yes_no("Review material?")
+        completion_id = writes.add_completion(
+            con, category, outcome=outcome.strip(), measure=measure,
+            quantity=quantity, flagged=flagged, completed_at=completed_at, duty=duty)
+        print(f"Logged completion {completion_id}.")
+        maybe_export(args, con)
+
+
 def cmd_done(args):
+    completed_at = completion_timestamp(args.date)
     con = db.connect(args.db)
     task = reads.get_task(con, args.task_id)
     if task is None:
@@ -175,7 +220,7 @@ def cmd_done(args):
 
     completion_id = writes.complete_task(
         con, task["id"], outcome=outcome, measure=measure,
-        quantity=quantity, flagged=flagged, duty=duty)
+        quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at)
     print(f"Logged completion {completion_id}.")
     maybe_export(args, con)
 
@@ -409,7 +454,19 @@ def build_parser():
     p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--quantity", type=float, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
+    p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
     p.set_defaults(func=cmd_done)
+
+    p = sub.add_parser("log", help="record an accomplishment without a task",
+                       description="Archive unplanned work. Run bare for guided entry.")
+    p.add_argument("outcome", nargs="?", help="what happened (required, or prompted)")
+    p.add_argument("-c", "--category", help="category name")
+    p.add_argument("--duty", metavar="NAME", help="a registered duty")
+    p.add_argument("--measure", metavar="NAME", help="a registered measure")
+    p.add_argument("--quantity", type=float, metavar="N", help="how many")
+    p.add_argument("--flag", action="store_true", help="mark as review material")
+    p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
+    p.set_defaults(func=cmd_log)
 
     p = sub.add_parser("upcoming", help="project deadlines approaching",
                        description="Active projects with a deadline inside the window, "

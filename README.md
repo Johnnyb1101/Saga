@@ -105,6 +105,7 @@ python main.py today                    # due today, plus anything overdue
 python main.py list [-c NAME]           # every open task, with ids
 python main.py add "text" [-c NAME] [--due DATE] [--project ID]
 python main.py done ID [--outcome "..."] [--measure NAME] [--quantity N] [--flag]
+python main.py log "Outcome" -c work [--duty NAME] [--measure NAME] [--quantity N] [--flag]
 python main.py upcoming [--days 30]     # project deadlines approaching
 python main.py project "name" [--deadline DATE]
 python main.py measure ["NAME"]         # list measures, or register one
@@ -119,6 +120,23 @@ python main.py --db PATH <command>      # run against a different database
 `python main.py done 12` walks you through it. Supply the flags and it never
 asks — which keeps the commands usable from a scheduled task, where there is
 nobody to answer.
+
+Use `log` for work that was never a task; it creates only a completion.
+Run `python main.py log` for guided entry, including an optional completion
+date. A nonblank outcome is required. With an outcome and category supplied,
+optional details are omitted unless provided as flags, and no prompts appear.
+
+Both `log` and `done` accept `--date YYYY-MM-DD` for historical work:
+
+```powershell
+python main.py log "Resolved an unexpected outage" -c work --date 2026-09-01 --flag
+python main.py done 12 --outcome "Delivered the report" --date 2026-09-01
+```
+
+An explicit date is stored at midnight local time; omitted dates use the
+current timestamp. Invalid or future completion dates are rejected. For
+`done`, supplying only an id and date still prompts for accomplishment details.
+Backdating records when work happened; it does not edit an existing completion.
 
 ## Backup and recovery
 
