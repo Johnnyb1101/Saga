@@ -81,7 +81,7 @@ Working end to end.
 - [x] Command-line interface
 - [x] Export for external consumers
 
-Not built yet: recurring tasks and automatic backup scheduling/retention.
+Not built yet: automatic backup scheduling/retention and a graphical interface.
 
 ## Requirements
 
@@ -109,6 +109,9 @@ python main.py reschedule ID --clear-due
 python main.py projects                 # all project ids, statuses, and open counts
 python main.py close-project ID         # mark done only when no open tasks remain
 python main.py add "text" [-c NAME] [--due DATE] [--project ID]
+python main.py add "text" -c work --due DATE --repeat monthly [--interval 1]
+python main.py recurrences              # series ids, schedules, and current tasks
+python main.py stop-recurrence ID       # stop generation; retain the current task
 python main.py done ID [--outcome "..."] [--measure NAME] [--quantity N] [--flag]
 python main.py log "Outcome" -c work [--duty NAME] [--measure NAME] [--quantity N] [--flag]
 python main.py upcoming [--days 30]     # project deadlines approaching
@@ -157,8 +160,49 @@ unchanged. Successfully changing the default database refreshes exports.
 `projects` includes undated, on-hold, and closed projects. `close-project`
 marks an active or on-hold project done only after every task is completed
 or cancelled. It does not change task statuses or create completions. New
-tasks cannot be assigned to done or cancelled projects. Reopening and
-recurrence are not part of these commands.
+tasks cannot be assigned to done or cancelled projects. Reopening is not
+part of these commands. Cancelling a recurring task also stops its series.
+
+## Recurring tasks
+
+Create a series with a first due date and a daily, weekly, or monthly interval:
+
+```powershell
+python main.py add "Check the monthly report" -c work --due 2026-09-30 --repeat monthly
+python main.py add "Review the checklist" -c work --due 2026-09-28 --repeat weekly --interval 2
+python main.py recurrences
+```
+
+`--interval` defaults to 1 and must be a positive integer. The first due date
+anchors the schedule. Monthly dates clamp to the last valid day of a short
+month, then return to the original day: January 31, February 28 (or 29),
+March 31. Every two weeks means 14 days from each scheduled occurrence.
+
+There is at most one open task per series. Completing it archives the result
+and creates the next task in the same transaction; if either step fails,
+both roll back. Early, late, or backdated completion does not move the
+schedule. Missed occurrences are not silently skipped: the next task may
+already be overdue. Reading a brief does not create more tasks.
+
+Rescheduling or clearing the current task's due date affects only that
+occurrence. Later instances retain the original schedule and series title,
+category, duty, and project. A duty override while completing a task applies
+only to that completion. Correcting an archived completion never generates
+another task or changes the schedule.
+
+`cancel TASK_ID` cancels the current task and stops its series without adding
+an accomplishment. `stop-recurrence SERIES_ID` stops future generation but
+keeps the current task open; completing it will not create a successor.
+Use `recurrences` to find series ids and `list` to find task ids. A project
+cannot close until its current tasks are resolved. To finish a recurring
+project, stop its series and complete the last task, or cancel that task.
+Stopped series cannot be restarted or edited in this version; create a new
+series for a changed pattern. Records from the old series remain intact.
+
+Existing databases require `python main.py migrate` for schema version 3,
+followed by `python main.py export`. Existing tasks remain one-off tasks;
+no completion history is changed. Brief JSON task objects gain nullable
+`recurrence_id` and `occurrence_index` fields; existing fields remain intact.
 
 ## Historical context and corrections
 
@@ -199,7 +243,8 @@ quantity pair. Empty reasons, unchanged corrections, and stale ids are rejected.
 Changing category uses that category's current review eligibility unless
 explicitly overridden; other corrections preserve the saved eligibility.
 
-Existing databases require `python main.py migrate` for schema version 2.
+Archive snapshots were introduced in schema version 2; `python main.py migrate`
+applies that migration and any later migrations needed by the current code.
 Migration keeps original completion fields intact and backfills context
 from the tasks, projects, and categories as they exist **at migration time**.
 It cannot reconstruct earlier values. Those rows are marked `backfilled`,
@@ -316,7 +361,8 @@ filters, immutable snapshots, correction chains, migration preservation,
 and exports. The version-zero schema in
 `tests/fixtures/schema_v0.sql` is frozen from commit `7ff0f99^`; keep it
 independent of the current schema. `tests/fixtures/schema_v1.sql` preserves
-the schema before archive history was introduced. Migration tests also inject failures to
+the schema before archive history was introduced, and `schema_v2.sql` preserves
+the schema before recurrence. Migration tests also inject failures to
 verify rollback of schema, records, and version, and successful retry.
 Atomic export publication is not established by these tests.
 

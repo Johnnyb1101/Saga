@@ -8,6 +8,8 @@ All SQL uses ? placeholders. Values are never formatted into a statement.
 
 import datetime as dt
 
+from saga.recurrence import occurrence_date
+
 
 def add_project(con, name, description=None, start_date=None, deadline=None):
     """Insert a project. Returns its new id."""
@@ -21,23 +23,45 @@ def add_project(con, name, description=None, start_date=None, deadline=None):
         )
     return cur.lastrowid
 
-def add_task(con, title, category, project_id=None, due_date=None, duty=None):
-    """Insert a task. Returns its new id."""
+def _require_project_accepts_tasks(con, project_id):
+    if project_id is not None:
+        project = con.execute("SELECT status FROM projects WHERE id=?", (project_id,)).fetchone()
+        if project is None:
+            raise ValueError(f"No project with id {project_id}.")
+        if project["status"] in ("done", "cancelled"):
+            raise ValueError(f"Project {project_id} is {project['status']}; cannot add tasks.")
+
+
+def _insert_task(con, title, category, project_id, due_date, duty,
+                 recurrence_id=None, occurrence_index=None):
+    """Insert within the caller's transaction, including recurrence advancement."""
+    _require_project_accepts_tasks(con, project_id)
+    return con.execute(
+        """INSERT INTO tasks (title, category, project_id, due_date, duty, recurrence_id, occurrence_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (title, category, project_id, due_date, duty, recurrence_id, occurrence_index),
+    ).lastrowid
+
+
+def add_task(con, title, category, project_id=None, due_date=None, duty=None,
+             repeat=None, interval=1):
+    """Insert a task, optionally with a schedule. Returns the first task id."""
+    if repeat is None and interval != 1:
+        raise ValueError("--interval requires --repeat")
+    if repeat is not None:
+        due_date = occurrence_date(due_date, repeat, interval, 0)
     with con:
-        if project_id is not None:
-            project = con.execute("SELECT status FROM projects WHERE id=?", (project_id,)).fetchone()
-            if project is None:
-                raise ValueError(f"No project with id {project_id}.")
-            if project["status"] in ("done", "cancelled"):
-                raise ValueError(f"Project {project_id} is {project['status']}; cannot add tasks.")
-        cur = con.execute(
-            """
-            INSERT INTO tasks (title, category, project_id, due_date, duty)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (title, category, project_id, due_date, duty),
-        )
-    return cur.lastrowid
+        recurrence_id = None
+        if repeat is not None:
+            _require_project_accepts_tasks(con, project_id)
+            recurrence_id = con.execute(
+                """INSERT INTO recurrences
+                   (title, category, project_id, duty, frequency, interval, anchor_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (title, category, project_id, duty, repeat, interval, due_date),
+            ).lastrowid
+        return _insert_task(con, title, category, project_id, due_date, duty,
+                            recurrence_id, 0 if recurrence_id is not None else None)
 
 def cancel_task(con, task_id):
     """Cancel an open task without creating an accomplishment."""
@@ -46,6 +70,17 @@ def cancel_task(con, task_id):
                               (task_id,))
         if changed.rowcount != 1:
             raise ValueError(f"Task {task_id} does not exist or is not open.")
+        con.execute("""UPDATE recurrences SET status='stopped'
+                       WHERE id=(SELECT recurrence_id FROM tasks WHERE id=?)""", (task_id,))
+
+
+def stop_recurrence(con, recurrence_id):
+    """Stop future generation, retaining the current task and all history."""
+    with con:
+        changed = con.execute("UPDATE recurrences SET status='stopped' WHERE id=? AND status='active'",
+                              (recurrence_id,))
+        if changed.rowcount != 1:
+            raise ValueError(f"Recurrence {recurrence_id} is missing or already stopped.")
 
 
 def reschedule_task(con, task_id, due_date):
@@ -121,7 +156,7 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
                   flagged=False, completed_at=None, duty=None):
     """Archive a completion and close the task. Returns the completion id."""
     task = con.execute(
-        "SELECT status, category, duty FROM tasks WHERE id = ?", (task_id,)
+        "SELECT status, category, duty, recurrence_id, occurrence_index FROM tasks WHERE id = ?", (task_id,)
     ).fetchone()
 
     if task is None:
@@ -133,7 +168,16 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
         cur = _insert_completion(con, task_id, task["category"], outcome,
                                  measure, quantity, flagged, completed_at,
                                  task["duty"] if duty is None else duty)
-        con.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (task_id,))
+        changed = con.execute("UPDATE tasks SET status = 'done' WHERE id = ? AND status='open'", (task_id,))
+        if changed.rowcount != 1:
+            raise ValueError(f"Task {task_id} is no longer open.")
+        if task["recurrence_id"] is not None:
+            series = con.execute("SELECT * FROM recurrences WHERE id=?", (task["recurrence_id"],)).fetchone()
+            if series["status"] == "active":
+                next_index = task["occurrence_index"] + 1
+                due = occurrence_date(series["anchor_date"], series["frequency"], series["interval"], next_index)
+                _insert_task(con, series["title"], series["category"], series["project_id"], due,
+                             series["duty"], series["id"], next_index)
     return cur.lastrowid
 
 

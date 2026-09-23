@@ -214,6 +214,8 @@ class HistoryMigrationTests(unittest.TestCase):
                     self.assertEqual(db.schema_version(con), 1)
                 target.write_text(script, encoding="utf-8")
                 db.migrate(path)
+            # Finish later migrations before opening through the current version gate.
+            db.migrate(path)
             with contextlib.closing(db.connect(path)) as con:
                 self.assertEqual(reads.completion_list(con)[0]["outcome"], "Preserved")
 

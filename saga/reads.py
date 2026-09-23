@@ -65,6 +65,21 @@ def projects(con):
     ).fetchall()
 
 
+def recurrences(con):
+    """All schedules, with their one open instance if present."""
+    return con.execute(
+        """SELECT r.*, t.id AS task_id, t.due_date, t.occurrence_index
+           FROM recurrences r
+           LEFT JOIN tasks t ON t.recurrence_id=r.id AND t.status='open'
+           ORDER BY r.id"""
+    ).fetchall()
+
+
+def open_occurrence(con, recurrence_id):
+    return con.execute("SELECT * FROM tasks WHERE recurrence_id=? AND status='open'",
+                       (recurrence_id,)).fetchone()
+
+
 def due_today(con, on=None):
     """Open tasks due on the given day. Defaults to today."""
     return con.execute(

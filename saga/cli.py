@@ -28,7 +28,8 @@ def print_tasks(rows, mode=None):
             extra = f"{-days_between(row['due_date']):>3}d       "
         elif mode == "date":
             extra = f"{row['due_date'] or '':<12}"
-        print(f"  {row['id']:>4}  {row['category']:<9}{extra}{row['title']}")
+        repeat = f" [series {row['recurrence_id']}]" if row["recurrence_id"] is not None else ""
+        print(f"  {row['id']:>4}  {row['category']:<9}{extra}{row['title']}{repeat}")
 
 CONSTRAINT_HELP = {
     "date(": "dates must be YYYY-MM-DD with zero padding, e.g. 2026-09-04",
@@ -88,8 +89,12 @@ def cmd_add(args):
         due = ask("Due date (YYYY-MM-DD, blank for none)")
 
     task_id = writes.add_task(con, text, category,
-                              project_id=args.project, due_date=due, duty=duty)
+                              project_id=args.project, due_date=due, duty=duty,
+                              repeat=args.repeat, interval=args.interval)
     print(f"Added task {task_id}: {text}")
+    if args.repeat:
+        task = reads.get_task(con, task_id)
+        print(f"Recurring series {task['recurrence_id']}: every {args.interval} {args.repeat} interval(s).")
     maybe_export(args, con)
 
 def cmd_project(args):
@@ -222,6 +227,10 @@ def cmd_done(args):
         con, task["id"], outcome=outcome, measure=measure,
         quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at)
     print(f"Logged completion {completion_id}.")
+    if task["recurrence_id"] is not None:
+        following = reads.open_occurrence(con, task["recurrence_id"])
+        if following is not None:
+            print(f"Next task {following['id']}: due {following['due_date']} (series {task['recurrence_id']}).")
     maybe_export(args, con)
 
 def fmt_number(value):
@@ -461,6 +470,9 @@ def cmd_cancel(args):
     with closing(db.connect(args.db)) as con:
         writes.cancel_task(con, args.task_id)
         print(f"Cancelled task {args.task_id}.")
+        task = reads.get_task(con, args.task_id)
+        if task["recurrence_id"] is not None:
+            print(f"Stopped recurring series {task['recurrence_id']}.")
         maybe_export(args, con)
 
 
@@ -485,6 +497,24 @@ def cmd_close_project(args):
     with closing(db.connect(args.db)) as con:
         writes.close_project(con, args.project_id)
         print(f"Closed project {args.project_id}.")
+        maybe_export(args, con)
+
+
+def cmd_recurrences(args):
+    with closing(db.connect(args.db)) as con:
+        rows = reads.recurrences(con)
+        if not rows:
+            print("No recurring series.")
+        for row in rows:
+            current = f"task {row['task_id']}, due {row['due_date'] or 'undated'}" if row["task_id"] is not None else "no open task"
+            print(f"  {row['id']:>4}  {row['status']:<7}  {row['frequency']} every {row['interval']} "
+                  f"from {row['anchor_date']}  {row['title']}  ({current})")
+
+
+def cmd_stop_recurrence(args):
+    with closing(db.connect(args.db)) as con:
+        writes.stop_recurrence(con, args.recurrence_id)
+        print(f"Stopped recurring series {args.recurrence_id}; its current task is retained.")
         maybe_export(args, con)
 
 
@@ -530,6 +560,13 @@ def build_parser():
     p.add_argument("project_id", type=int, metavar="ID")
     p.set_defaults(func=cmd_close_project)
 
+    p = sub.add_parser("recurrences", help="list recurring schedules and current task ids")
+    p.set_defaults(func=cmd_recurrences)
+
+    p = sub.add_parser("stop-recurrence", help="stop a schedule while retaining its current task")
+    p.add_argument("recurrence_id", type=int, metavar="ID")
+    p.set_defaults(func=cmd_stop_recurrence)
+
     p = sub.add_parser("add", help="add a task",
                        description="Add a task. Run it bare to be prompted for everything.")
     p.add_argument("text", nargs="?", help="what the task is")
@@ -537,6 +574,8 @@ def build_parser():
     p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--due", metavar="DATE", help="due date, YYYY-MM-DD")
     p.add_argument("--project", type=int, metavar="ID", help="project id")
+    p.add_argument("--repeat", choices=("daily", "weekly", "monthly"), help="repeat from the first due date")
+    p.add_argument("--interval", type=int, default=1, metavar="N", help="positive number of repeat units (default: 1)")
     p.set_defaults(func=cmd_add)
 
     p = sub.add_parser("done", help="complete a task",
