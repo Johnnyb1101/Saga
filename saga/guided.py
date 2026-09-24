@@ -67,16 +67,23 @@ def choose(prompt, choices, cancel_label="Back"):
 def pick(prompt, choices):
     """Paginate reference selections too, so long duty/project lists stay usable."""
     page = 0
+    original_choices = choices
     while True:
         subset = choices[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
         print(f"\n{prompt} — page {page + 1} of {max(1, (len(choices) + PAGE_SIZE - 1) // PAGE_SIZE)}")
         for index, (label, _) in enumerate(subset, 1):
             print(f"  {index}. {line(label)}")
-        print("  n. Next page   p. Previous page   0. Back")
+        print("  s. Search   a. Clear search   n. Next page   p. Previous page   0. Back")
         raw = answer("Choose").lower()
         if raw == "0":
             raise Back
-        if raw == "n" and (page + 1) * PAGE_SIZE < len(choices):
+        if raw == "s":
+            needle = answer("Search names").casefold()
+            choices = [(label, value) for label, value in original_choices if needle in str(label).casefold()]
+            page = 0
+        elif raw == "a":
+            choices, page = original_choices, 0
+        elif raw == "n" and (page + 1) * PAGE_SIZE < len(choices):
             page += 1
         elif raw == "p" and page:
             page -= 1
@@ -90,7 +97,7 @@ def category(con):
     return pick("Category — which area of life? (work, school, home, etc.)", [(r["name"], r["name"]) for r in reads.categories(con)])
 
 
-def reference(con, kind):
+def reference(con, kind, category_name=None):
     label = {"duty": "role or responsibility", "project": "project", "measure": "measurement unit"}[kind]
     explanation = {
         "duty": "Which ongoing responsibility does this belong to? For example: training or maintenance.",
@@ -102,7 +109,7 @@ def reference(con, kind):
         rows = [r for r in reads.projects(con) if r["status"] in ("active", "on_hold")]
         refs = [Reference(r["id"], f"{r['name']} — {r['status']} — deadline {r['deadline'] or 'none'} (ID {r['id']})") for r in rows]
     else:
-        rows = reads.duties(con) if kind == "duty" else reads.measures(con)
+        rows = reads.duties(con, category_name) if kind == "duty" else reads.measures(con)
         refs = [Reference(r["name"], r["name"]) for r in rows]
     choices = [("None / not applicable", Reference(None, "None / not applicable")),
                (f"Add a new {label}", "new"), *[(str(r), r) for r in refs]]
@@ -197,8 +204,14 @@ def form(title, questions, save):
             if key in draft:
                 print(f"Previous answer: {display(draft[key])}")
             try:
+                previous = draft.get(key)
                 draft[key] = prompt()
-                index = len(questions) if editing else index + 1
+                if editing and key == "category" and draft[key] != previous:
+                    draft.pop("duty", None)
+                    index = next(i for i, (name, _, _) in enumerate(questions) if name == "duty")
+                    print("Category changed. Choose a role for this category explicitly.")
+                else:
+                    index = len(questions) if editing else index + 1
             except Back:
                 if index:
                     index -= 1
@@ -259,10 +272,14 @@ def refs(draft):
 
 
 def add_task(con, path):
+    selected_category = {}
+    def select_category():
+        selected_category['name'] = category(con)
+        return selected_category['name']
     questions = [
         ("title", "Task title", lambda: answer("What needs to be done?")),
-        ("category", "Category", lambda: category(con)),
-        ("duty", "Role or responsibility", lambda: reference(con, "duty")),
+        ("category", "Category", select_category),
+        ("duty", "Role or responsibility", lambda: reference(con, "duty", selected_category["name"])),
         ("project", "Project", lambda: reference(con, "project")),
         ("due_date", "Due date", day),
         ("repeat", "Repeat", repeat),
@@ -282,6 +299,10 @@ def add_task(con, path):
 
 
 def capture(con, path, task=None):
+    selected_category = {"name": task["category"]} if task else {}
+    def select_category():
+        selected_category['name'] = category(con)
+        return selected_category['name']
     questions = []
     if task:
         print(f"\nSelected task: {line(task['title'])} — category {task['category']}")
@@ -290,7 +311,7 @@ def capture(con, path, task=None):
         print("Category and project carry forward from the task; task-field editing is separate.")
         questions.append(("context", context, lambda: choose("Confirm task context", [(context, "Confirmed")])))
     else:
-        questions.append(("category", "Category", lambda: category(con)))
+        questions.append(("category", "Category", select_category))
     questions.extend([
         ("outcome", "Outcome (required)", lambda: answer("What did you accomplish, and what changed?")),
         ("completed_at", "Completion date", lambda: day(completed=True)),
@@ -298,10 +319,10 @@ def capture(con, path, task=None):
     if task and task["duty"] is not None:
         def duty():
             keep = choose("Role or responsibility", [(f"Keep {task['duty']}", True), ("Choose another role or responsibility, or none", False)])
-            return Reference(task["duty"], task["duty"]) if keep else reference(con, "duty")
+            return Reference(task["duty"], task["duty"]) if keep else reference(con, "duty", selected_category["name"])
         questions.append(("duty", "Role or responsibility", duty))
     else:
-        questions.append(("duty", "Role or responsibility", lambda: reference(con, "duty")))
+        questions.append(("duty", "Role or responsibility", lambda: reference(con, "duty", selected_category["name"])))
     questions.extend([
         ("measurement", "Measurement", lambda: measurement(con)),
         ("flagged", "Flag for review", lambda: choose("Useful for a performance review?", [("Yes", True), ("No", False)])),
@@ -412,6 +433,45 @@ def task_action(con, path, task, action=None):
     form(f"{action.title()}: {line(task['title'])}", questions, save)
 
 
+def manage_roles(con):
+    selected = category(con)
+    while True:
+        rows = reads.duties(con, selected, include_inactive=True)
+        print(f"\nRoles in {selected}: {len(rows)}")
+        pending = sum(row['status'] == 'needs_review' for row in rows)
+        if pending:
+            print(f"{pending} legacy names need review. Explicitly activate one or retire them.")
+        unassigned = reads.unassigned_roles(con)
+        if unassigned:
+            print(f"{len(unassigned)} legacy roles still need a category assignment.")
+        try:
+            action = choose("Manage roles", [("Add / assign a role", "add"),
+                ("Retire a role", "retire"), ("Activate a role", "activate"),
+                ("View / search roles", "view"), ("Assign an unused legacy role", "assign")], cancel_label="Return")
+            if action == "view":
+                pick("Roles (select to return)", [(f"{r['name']} [{r['status']}]", r['name']) for r in rows])
+                continue
+            if action == "assign":
+                name = pick("Unassigned legacy roles", [(r['name'], r['name']) for r in unassigned])
+                choose(f"Assign {name} to {selected}?", [("Save", True)])
+                writes.add_duty(con, name, selected)
+            elif action == "add":
+                name = answer("Role name (use the exact legacy name to assign an unassigned role)")
+                choose(f"Add {name} to {selected}?", [("Save", True)])
+                writes.add_duty(con, name, selected)
+            else:
+                name = pick("Choose a role", [(f"{r['name']} [{r['status']}]", r['name']) for r in rows])
+                choose(f"{action.title()} {name} in {selected}?", [("Save", True)])
+                writes.set_role_status(con, selected, name, action == "activate")
+            print("Role saved. Historical records are unchanged.")
+        except Back:
+            continue
+        except Cancel:
+            return
+        except (ValueError, sqlite3.Error) as exc:
+            print(f"Could not save role: {exc}")
+
+
 def run(path):
     if not sys.stdin.isatty():
         print("The guided menu requires a terminal.", file=sys.stderr)
@@ -426,7 +486,7 @@ def run(path):
                 try:
                     action = choose("Main menu", [("Browse tasks / today", "browse"), ("Add a task", "add"),
                         ("Complete a task", "done"), ("Record an accomplishment", "log"),
-                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel")],
+                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles")],
                         cancel_label="Exit")
                 except (Back, Cancel):
                     return 0
@@ -435,6 +495,8 @@ def run(path):
                         add_task(con, path)
                     elif action == "log":
                         capture(con, path)
+                    elif action == "roles":
+                        manage_roles(con)
                     else:
                         while True:
                             task = task_picker(con)

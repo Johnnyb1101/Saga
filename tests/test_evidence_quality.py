@@ -17,8 +17,8 @@ class EvidenceQualityTests(unittest.TestCase):
         self.con = db.connect(self.path)
         self.addCleanup(self.con.close)
         writes.add_measure(self.con, "units")
-        writes.add_duty(self.con, "Operations")
-        writes.add_duty(self.con, "Other")
+        writes.add_duty(self.con, "Operations", "work")
+        writes.add_duty(self.con, "Other", "work")
 
     def capture(self, **kwargs):
         fields = {"category": "work", "outcome": "Invented result", "measure": "units",

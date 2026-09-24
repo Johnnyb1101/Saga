@@ -17,7 +17,7 @@ class CaptureTests(unittest.TestCase):
         db.init_db(self.path)
         self.con = db.connect(self.path)
         self.addCleanup(self.con.close)
-        writes.add_duty(self.con, "Operations")
+        writes.add_duty(self.con, "Operations", "work")
         writes.add_measure(self.con, "packages")
 
     def run_cli(self, *args):

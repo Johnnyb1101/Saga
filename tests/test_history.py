@@ -18,8 +18,8 @@ class HistoryTests(unittest.TestCase):
         self.con = db.connect(self.path)
         self.addCleanup(self.con.close)
         writes.add_measure(self.con, "packages")
-        writes.add_duty(self.con, "Operations")
-        writes.add_duty(self.con, "Training")
+        writes.add_duty(self.con, "Operations", "work")
+        writes.add_duty(self.con, "Training", "work")
         self.project = writes.add_project(self.con, "Original project")
         self.task = writes.add_task(self.con, "Original title", "work", self.project,
                                    due_date="2020-01-01", duty="Operations")
@@ -97,7 +97,7 @@ class HistoryTests(unittest.TestCase):
                                 ("Reason", {"task_id": None})):
             with self.subTest(reason=reason, changes=changes), self.assertRaises(ValueError):
                 writes.correct_completion(self.con, self.original, reason, **changes)
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaisesRegex(ValueError, "not assigned"):
             writes.correct_completion(self.con, self.original, "Unknown duty", duty="missing")
         with self.assertRaises(sqlite3.IntegrityError):
             writes.correct_completion(self.con, self.original, "Incomplete measure", quantity=None)

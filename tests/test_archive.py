@@ -57,8 +57,8 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual([(r["id"], r["days_left"], r["open_tasks"]) for r in rows], [(edge, 2, 1)])
 
     def test_review_dates_and_duty_filter_apply_to_every_aggregate(self):
-        writes.add_duty(self.con, "Operations")
-        writes.add_duty(self.con, "Training")
+        writes.add_duty(self.con, "Operations", "work")
+        writes.add_duty(self.con, "Training", "work")
         writes.add_measure(self.con, "packages")
         for stamp, duty, quantity in (
             ("2020-02-28 23:59:59", "Operations", 100),

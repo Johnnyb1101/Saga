@@ -11,13 +11,15 @@ import tempfile
 from contextlib import closing
 from pathlib import Path
 
+from saga.roles import name_key
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 DB_PATH = ROOT / "data" / "saga.db"
 SCHEMA_PATH = HERE / "schema.sql"
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _open(db_path):
@@ -29,6 +31,7 @@ def _open(db_path):
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys = ON")
     con.row_factory = sqlite3.Row
+    con.create_function("role_name_key", 1, name_key, deterministic=True)
     return con
 
 

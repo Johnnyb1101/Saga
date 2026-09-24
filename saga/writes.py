@@ -10,6 +10,7 @@ import datetime as dt
 import math
 
 from saga.recurrence import occurrence_date
+from saga.roles import name_key
 
 
 def add_project(con, name, description=None, start_date=None, deadline=None):
@@ -37,6 +38,7 @@ def _insert_task(con, title, category, project_id, due_date, duty,
                  recurrence_id=None, occurrence_index=None):
     """Insert within the caller's transaction, including recurrence advancement."""
     _require_project_accepts_tasks(con, project_id)
+    require_role(con, category, duty)
     return con.execute(
         """INSERT INTO tasks (title, category, project_id, due_date, duty, recurrence_id, occurrence_index)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -119,11 +121,61 @@ def add_measure(con, name):
         con.execute("INSERT INTO measures (name) VALUES (?)", (name,))
     return name
 
-def add_duty(con, name):
-    """Register a duty so tasks and completions can be filed under it."""
+def _register_role(con, name, category):
+    key = name_key(name)
+    if not key:
+        raise ValueError("Role name must not be blank")
+    duplicate = con.execute(
+        "SELECT duty, status FROM category_roles WHERE category=? AND name_key=?",
+        (category, key),
+    ).fetchone()
+    if duplicate:
+        raise ValueError(f"Role {duplicate['duty']!r} already exists in {category} "
+                         f"({duplicate['status']}); reuse or reactivate it")
+    con.execute("INSERT INTO duties(name) VALUES (?) ON CONFLICT(name) DO NOTHING", (name,))
+    con.execute("INSERT INTO category_roles(category,duty,name_key) VALUES (?,?,?)",
+                (category, name, key))
+
+
+def add_duty(con, name, category):
+    """Register a role in a category, or assign an unused legacy name explicitly."""
     with con:
-        con.execute("INSERT INTO duties (name) VALUES (?)", (name,))
+        _register_role(con, name, category)
     return name
+
+
+def require_role(con, category, duty, allow_inactive=False):
+    if duty is None:
+        return
+    role = con.execute("SELECT status FROM category_roles WHERE category=? AND duty=?",
+                       (category, duty)).fetchone()
+    if role is None:
+        raise ValueError(f"Role {duty!r} is not assigned to category {category!r}")
+    if role['status'] != 'active' and not allow_inactive:
+        raise ValueError(f"Role {duty!r} is {role['status']}; choose an active role or None")
+
+
+def set_role_status(con, category, duty, active):
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        role = con.execute("SELECT * FROM category_roles WHERE category=? AND duty=?",
+                           (category, duty)).fetchone()
+        if role is None:
+            raise ValueError("No such role in this category")
+        if not active and con.execute(
+                "SELECT 1 FROM recurrences WHERE category=? AND duty=? AND status='active'",
+                (category, duty)).fetchone():
+            raise ValueError("Stop active recurring series using this role before retiring it")
+        if active:
+            if not role['name_key']:
+                raise ValueError("A blank legacy name cannot be activated; retire it and add a named role")
+            conflict = con.execute(
+                "SELECT duty FROM category_roles WHERE category=? AND name_key=? "
+                "AND duty<>? AND status='active'", (category, role['name_key'], duty)).fetchone()
+            if conflict:
+                raise ValueError(f"Conflicting active role: {conflict['duty']!r}. Resolve it explicitly first")
+        con.execute("UPDATE category_roles SET status=? WHERE category=? AND duty=?",
+                    ('active' if active else 'retired', category, duty))
 
 def validate_quantity(quantity):
     """Reject non-finite measurements before SQLite can store or coerce them."""
@@ -133,9 +185,10 @@ def validate_quantity(quantity):
 
 
 def _insert_completion(con, task_id, category, outcome, measure, quantity,
-                       flagged, completed_at, duty):
+                       flagged, completed_at, duty, allow_inactive=False):
     """Shared INSERT for both completion paths. The caller owns the transaction."""
     validate_quantity(quantity)
+    require_role(con, category, duty, allow_inactive)
     return con.execute(
         """
         INSERT INTO completions
@@ -176,7 +229,8 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
     with con:
         cur = _insert_completion(con, task_id, task["category"], outcome,
                                  measure, quantity, flagged, completed_at,
-                                 task["duty"] if duty is None and inherit_duty else duty)
+                                 task["duty"] if duty is None and inherit_duty else duty,
+                                 allow_inactive=(duty == task["duty"] or duty is None and inherit_duty))
         changed = con.execute("UPDATE tasks SET status = 'done' WHERE id = ? AND status='open'", (task_id,))
         if changed.rowcount != 1:
             raise ValueError(f"Task {task_id} is no longer open.")
@@ -213,7 +267,13 @@ def save_guided(con, action, values, *, new_duty=None, new_measure=None,
             if values.get("task_id") != expected_task["id"]:
                 raise ValueError("Selected task does not match the action")
         if new_duty is not None:
-            con.execute("INSERT INTO duties(name) VALUES (?)", (new_duty,))
+            role_category = values.get("category")
+            if role_category is None:
+                task = con.execute("SELECT category FROM tasks WHERE id=?", (values.get("task_id"),)).fetchone()
+                if task is None:
+                    raise ValueError("Choose a category before adding a role")
+                role_category = task['category']
+            _register_role(con, new_duty, role_category)
             values["duty"] = new_duty
         if new_measure is not None:
             con.execute("INSERT INTO measures(name) VALUES (?)", (new_measure,))
@@ -245,6 +305,8 @@ def correct_completion(con, completion_id, reason, **changes):
             raise ValueError(f"Completion {completion_id} is missing or superseded; use completions/history to find its latest id.")
         values = dict(original)
         values.update(changes)
+        require_role(con, values['category'], values['duty'],
+                     allow_inactive=(values['category'], values['duty']) == (original['category'], original['duty']))
         validate_quantity(values["quantity"])
         if not values["outcome"] or not values["outcome"].strip():
             raise ValueError("a corrected completion must have a nonblank outcome")
