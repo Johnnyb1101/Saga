@@ -84,8 +84,7 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Daily, weekly, and monthly recurrence
 - [x] Morning brief script (scheduler setup is machine-specific)
 
-Remaining work includes automatic backup scheduling/retention and broader
-input-quality checks. A future interface
+Remaining work includes broader input-quality checks. A future interface
 will use the same core functions; its form will follow actual capture needs.
 
 ## Requirements
@@ -318,8 +317,8 @@ The source is opened read-only; exports are not refreshed. A failed copy is
 removed. Only use or copy a snapshot after the command reports success.
 
 Choose a separate drive or a synced folder for the closed backup files.
-A copy on the same drive does not protect against drive loss. Scheduling
-and retention are manual for now; the command never prunes older backups.
+A copy on the same drive does not protect against drive loss. The manual
+`backup` command never prunes older backups.
 
 To recover, stop Saga commands and the morning scheduled task, then copy a
 successful backup to a **new local path**, such as `data/recovered.db`.
@@ -330,6 +329,58 @@ Use `--db data/recovered.db` to work with the recovered copy. This procedure
 does not replace the default database or change the morning task's path.
 If a backup predates a schema upgrade, run `migrate` against the recovered
 copy first, using the same `--db` option.
+
+### Scheduled backups
+
+The noninteractive runner creates a snapshot, restores it into a temporary
+local directory, checks integrity and foreign keys, and exercises task,
+completion, and review queries. Only then can retention remove older copies.
+It requires the current database schema; migrate the working database first
+when upgrading Saga. No third-party packages are required.
+
+```powershell
+.\.venv\Scripts\python.exe scheduled_backup.py --out "$env:OneDrive\SagaBackups" --keep 30
+.\scripts\install-backup-task.ps1 -Destination "$env:OneDrive\SagaBackups" -At '06:00' -Keep 30 -WhatIf
+.\scripts\install-backup-task.ps1 -Destination "$env:OneDrive\SagaBackups" -At '06:00' -Keep 30
+```
+
+Use your chosen destination if OneDrive is not configured. The first command
+runs immediately; the setup script registers a daily Windows task using the
+project's Python 3.14 virtual environment and absolute paths. It runs hidden
+as the current user **while signed in**, including while the screen is locked.
+Missed runs are eligible to run when available; this does not wake a powered-off
+computer. It permits battery operation, prevents overlapping task instances,
+and limits a run to one hour. An existing task is not silently replaced.
+Moving the checkout or virtual environment requires recreating the task.
+
+`--keep 30` / `-Keep 30` explicitly enables retention of the newest 30 successful
+snapshots, counted by successful run order, not file modification time. Omit
+that option to keep every copy. Each source path gets its own managed subfolder
+and manifest; manual snapshots, migration backups, and unregistered files are
+never pruned. Treat the manifest as managed state, not a file to edit. Changing
+the source path starts a separate collection. An interrupted manifest update
+can leave an unregistered snapshot which is preserved for manual inspection.
+
+A failed backup or restore check does not prune earlier copies. A retention
+failure reports an error but retains the new verified backup; retrying can
+finish cleanup. The runner also uses `run.lock` to prevent overlapping manual
+runs. Abrupt termination can leave this lock: confirm no backup process is
+running before removing **only that lock file**. Never remove a lock merely
+because it is old. Do not run multiple computers against one managed folder.
+
+Results are recorded in `scheduled-backup.log` beside the runner, with two
+rotated logs of up to roughly 1 MB each. A nonzero task result indicates failure.
+Inspect both status and the most recent log timestamp regularly:
+
+```powershell
+Get-ScheduledTaskInfo -TaskName 'Saga Scheduled Backup'
+Get-Content .\scheduled-backup.log -Tail 10
+```
+
+The restore check verifies the local snapshot every run. It does not verify
+that OneDrive has uploaded the files or that a remote copy can be downloaded.
+Periodically recover a downloaded copy to a separate local path using the
+recovery procedure above. Keep the working database outside OneDrive.
 
 ## Try it
 
