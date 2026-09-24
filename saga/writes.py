@@ -393,6 +393,43 @@ CORRECTION_FIELDS = (
 )
 
 
+def save_guided_correction(con, expected_completion, expected_followup, reason, *,
+                           new_duty=None, new_measure=None, remind_on=None, **changes):
+    """Save confirmed evidence and new references atomically after stale checks.
+
+    The reminder snapshot matters even when its completion revision is unchanged:
+    a separate command can reschedule a reminder while the draft is open.
+    """
+    if con.in_transaction:
+        raise ValueError("Finish the current transaction before saving a guided correction")
+    completion_id = expected_completion['id']
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        current = con.execute("SELECT * FROM current_completions WHERE id=?", (completion_id,)).fetchone()
+        if current is None or dict(current) != dict(expected_completion):
+            raise ValueError("This accomplishment changed or was superseded. Discard and select it again.")
+        followup = con.execute("SELECT * FROM measurement_followups WHERE completion_id=?",
+                               (completion_id,)).fetchone()
+        if (dict(followup) if followup is not None else None) != expected_followup:
+            raise ValueError("This measurement reminder changed. Discard and select the accomplishment again.")
+        if 'completed_at' in changes and changes['completed_at'] != current['completed_at']:
+            try:
+                actual = dt.datetime.fromisoformat(changes['completed_at'])
+                if actual.strftime('%Y-%m-%d %H:%M:%S') != changes['completed_at']:
+                    raise ValueError
+                if actual.date() > dt.date.today():
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValueError("Actual completion date must be valid and not in the future") from None
+        if new_duty is not None:
+            _register_role(con, new_duty, changes.get('category', current['category']))
+            changes['duty'] = new_duty
+        if new_measure is not None:
+            con.execute("INSERT INTO measures(name) VALUES (?)", (new_measure,))
+            changes['measure'] = new_measure
+        return correct_completion(con, completion_id, reason, remind_on=remind_on, **changes)
+
+
 def correct_completion(con, completion_id, reason, remind_on=None, **changes):
     """Append a replacement of the latest revision, retaining all original rows."""
     if not reason or not reason.strip():

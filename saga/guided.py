@@ -43,6 +43,8 @@ class Measurement:
             return f"{self.quantity:g} {self.unit}"
         if self.status == 'unknown':
             return f"Not known yet; remind me on {self.remind_on}"
+        if self.status == 'unspecified':
+            return "Unspecified (no measurement decision recorded)"
         return "Not applicable (narrative evidence)"
 
 
@@ -655,7 +657,143 @@ def show_completion(row, current=True):
         print(f"  {label}: {line(row[field]) if row[field] is not None else '-'}")
 
 
-def browse_completions(con, scope, gaps_only=False):
+def correction_preview(original, draft, reason):
+    print("\nREVIEW BEFORE SAVING - Correct accomplishment")
+    labels = {'outcome': 'Outcome', 'category': 'Category', 'duty': 'Role or responsibility',
+              'completed_at': 'Actual completion date', 'measurement': 'Measurement',
+              'flagged': 'Flag for review', 'task_title': 'Saved task title',
+              'due_date': 'Saved deadline', 'project_name': 'Saved project name',
+              'review_counting': 'Saved review eligibility'}
+    for field, label in labels.items():
+        before, after = display(original[field]), display(draft[field])
+        print(f"  {label}: {before} -> {after}" if draft[field] != original[field]
+              else f"  {label}: {after} (unchanged)")
+    print(f"  Correction reason: {line(reason) if reason else '(required before saving)'}")
+    print("Saving appends a revision. Original evidence and working tasks/projects remain unchanged.")
+
+
+def correction_context(draft):
+    """Edit saved historical labels, never live tasks or project registrations."""
+    while True:
+        try:
+            field = choose("Historical context", [("Saved task title", 'task_title'),
+                ("Saved deadline", 'due_date'), ("Saved project name", 'project_name'),
+                ("Saved review eligibility", 'review_counting')])
+        except Back:
+            return
+        try:
+            if field == 'review_counting':
+                draft[field] = choose("Saved review eligibility", [
+                    (f"Keep {display(draft[field])}", draft[field]), ("Counts toward review", True),
+                    ("Does not count toward review", False)])
+            else:
+                action = choose(f"Saved {field.replace('_', ' ')}: {display(draft[field])}",
+                                [("Keep", 'keep'), ("Change", 'change'), ("Clear", 'clear')])
+                if action == 'clear':
+                    draft[field] = None
+                elif action == 'change':
+                    draft[field] = day() if field == 'due_date' else answer("Corrected saved text")
+        except Back:
+            continue
+
+
+def correct_accomplishment(con, path, selected):
+    """Draft explicit evidence changes, preview all effects, then append one revision."""
+    row = con.execute("SELECT * FROM current_completions WHERE id=?", (selected['id'],)).fetchone()
+    if row is None:
+        print("This accomplishment was superseded. Select its latest revision again.")
+        return False
+    original_row = dict(row)
+    followup = con.execute("SELECT * FROM measurement_followups WHERE completion_id=?", (row['id'],)).fetchone()
+    expected_followup = dict(followup) if followup is not None else None
+    initial = {field: row[field] for field in ('outcome', 'category', 'completed_at',
+               'task_title', 'due_date', 'project_name')}
+    initial.update(duty=Reference(row['duty'], row['duty'] or 'None / not applicable'),
+                   flagged=bool(row['flagged']), review_counting=bool(row['review_counting']),
+                   measurement=Measurement(row['measurement_status'],
+                       Reference(row['measure'], row['measure'] or 'No unit'), row['quantity'],
+                       followup['remind_on'] if followup is not None and followup['status'] == 'open' else None))
+    draft = dict(initial)
+    reason = None
+    while True:
+        correction_preview(initial, draft, reason)
+        try:
+            field = choose("Correct accomplishment", [("Outcome", 'outcome'), ("Category", 'category'),
+                ("Role or responsibility", 'duty'), ("Actual completion date", 'completed_at'),
+                ("Measurement", 'measurement'), ("Flag for review", 'flagged'),
+                ("Historical context (optional)", 'context'), ("Correction reason", 'reason'),
+                ("Save correction", 'save')], cancel_label="Discard draft")
+            if field == 'context':
+                correction_context(draft)
+                continue
+            if field == 'reason':
+                reason = answer("Why is this evidence being corrected?")
+                continue
+            if field == 'save':
+                values, new = refs({'duty': draft['duty']})
+                values.update({key: draft[key] for key in ('outcome', 'category', 'completed_at',
+                              'flagged', 'task_title', 'due_date', 'project_name', 'review_counting')})
+                if draft['measurement'] != initial['measurement']:
+                    measured, registration = refs({'measurement': draft['measurement']})
+                    values.update(measured)
+                    new.update(registration)
+                changes = {key: value for key, value in values.items()
+                           if key == 'remind_on' or value != original_row[key]}
+                # Include all measurement fields together so inference cannot turn a
+                # deliberate measurement state into an unspecified one.
+                if draft['measurement'] != initial['measurement']:
+                    changes.update(measured)
+                if draft['category'] != initial['category']:
+                    changes['review_counting'] = draft['review_counting']
+                if not new and not any(key in writes.CORRECTION_FIELDS and value != original_row[key]
+                                       for key, value in changes.items()):
+                    print("No evidence changes to save. Use Measurement follow-ups for reminder-only rescheduling.")
+                    continue
+                if reason is None:
+                    reason = answer("Why is this evidence being corrected?")
+                correction_preview(initial, draft, reason)
+                decision = choose("Confirm correction", [("Save", 'save'), ("Edit answers", 'edit'),
+                                                           ("Discard draft", 'discard')])
+                if decision == 'discard':
+                    return False
+                if decision == 'edit':
+                    continue
+                try:
+                    revision = writes.save_guided_correction(con, original_row, expected_followup,
+                                                             reason, **new, **changes)
+                except (ValueError, sqlite3.Error, OSError) as exc:
+                    print(f"Could not save: {exc}. Edit or discard this draft.")
+                    continue
+                saved(con, path, f"Correction {revision} saved. No additional accomplishment counted.")
+                return True
+            if choose(f"{field.replace('_', ' ').capitalize()}: {display(draft[field])}",
+                      [("Keep", True), ("Change", False)]):
+                continue
+            if field == 'outcome':
+                draft[field] = answer("What happened and why did it matter?")
+            elif field == 'category':
+                selected_category = category(con)
+                if selected_category != draft['category']:
+                    print("Choose a compatible role or None. Review eligibility will use this category's current setting.")
+                    role = reference(con, 'duty', selected_category)
+                    eligibility = next(r['counts_toward_review'] for r in reads.categories(con)
+                                       if r['name'] == selected_category)
+                    draft.update(category=selected_category, duty=role, review_counting=bool(eligibility))
+            elif field == 'duty':
+                draft[field] = reference(con, 'duty', draft['category'])
+            elif field == 'completed_at':
+                draft[field] = day(completed=True) or dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            elif field == 'measurement':
+                draft[field] = measurement(con)
+            elif field == 'flagged':
+                draft[field] = choose("Flag for review?", [("Yes", True), ("No", False)])
+        except Back:
+            continue
+        except Cancel:
+            return False
+
+
+def browse_completions(con, scope, gaps_only=False, *, path):
     from saga import analytics
 
     while True:
@@ -682,7 +820,12 @@ def browse_completions(con, scope, gaps_only=False):
         while True:
             show_completion(row)
             try:
-                choose("Accomplishment action", [("View revision history", "history")], cancel_label="Return")
+                action = choose("Accomplishment action", [("View revision history", "history"),
+                    ("Correct accomplishment", "correct")], cancel_label="Return")
+                if action == 'correct':
+                    correct_accomplishment(con, path, row)
+                    # Requery current revisions and filters even after a stale selection.
+                    break
                 history = reads.completion_history(con, row['id'])
                 for revision in history:
                     show_completion(revision, revision['id'] == history[-1]['id'])
@@ -690,7 +833,7 @@ def browse_completions(con, scope, gaps_only=False):
                 break
 
 
-def review(con):
+def review(con, path):
     from saga.cli import show_review, show_review_scope
 
     scope = review_scope(con)
@@ -712,8 +855,8 @@ def review(con):
         else:
             if action == "gaps":
                 print("Review-counting or flagged entries; missing fields are prompts, not requirements.")
-                print("Use direct correct commands or Measurement follow-ups to update evidence.")
-            browse_completions(con, scope, gaps_only=action == "gaps")
+                print("Select an accomplishment to correct it, or use Measurement follow-ups for reminder-only changes.")
+            browse_completions(con, scope, gaps_only=action == "gaps", path=path)
 
 
 def run(path):
@@ -743,7 +886,7 @@ def run(path):
                     elif action == "log":
                         capture(con, path)
                     elif action == "review":
-                        review(con)
+                        review(con, path)
                     elif action == "followups":
                         manage_followups(con, path)
                     elif action == "roles":

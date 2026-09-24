@@ -85,8 +85,9 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Morning brief script (scheduler setup is machine-specific)
 
 The guided terminal interface covers daily capture, task selection, measurement
-follow-ups, and review browsing. Remaining work includes general guided
-corrections, consistent connection cleanup, and export-destination configuration.
+follow-ups, review browsing, and accomplishment corrections. Remaining work
+includes guided project/series management, consistent connection cleanup,
+and export-destination configuration.
 A future graphical interface will use the same core functions.
 
 ## Requirements
@@ -189,8 +190,7 @@ exits and discards unconfirmed answers. Existing direct commands and their
 prompt behavior remain available; scripts without a terminal still receive
 help rather than entering the menu.
 
-This menu does not close projects, stop series independently, or guide
-general archive corrections; use the
+This menu does not close projects or stop series independently; use the
 existing direct commands where supported. Adding a project within a task form
 records its name only. Standalone accomplishments do not acquire a project
 through this menu. `None / not applicable` is one stored empty state: distinct
@@ -335,9 +335,10 @@ The review menu offers the summary, searchable eight-row accomplishment pages,
 evidence gaps, and filter changes. Select a row to inspect its saved context,
 measurement state, actual completion date, and entry time, or view every
 revision in its history. Returning from details retains the review filters.
-Review inspection does not change records or refresh exports. Use existing
-direct `correct` commands or Measurement follow-ups to update evidence;
-general guided correction forms remain future work.
+Review inspection does not change records or refresh exports. Select
+**Correct accomplishment** from a record's actions to append corrected evidence.
+Direct `correct` commands remain available; use Measurement follow-ups for
+reminder-only rescheduling.
 
 Direct commands accept the same filters:
 
@@ -528,6 +529,43 @@ no completion history is changed. Brief JSON task objects gain nullable
 `recurrence_id` and `occurrence_index` fields; existing fields remain intact.
 
 ## Historical context and corrections
+
+In the guided menu, open **Review accomplishments**, browse accomplishments
+or evidence gaps, select a row, and choose **Correct accomplishment**. Select
+only the fields you want to change; other evidence stays as recorded. Outcome,
+category, role, actual completion date, measurement, and review flag offer
+explicit Keep/Change choices. **Historical context** optionally corrects the
+saved task title, deadline, project name, or review eligibility. These are
+archive snapshots: changing them does not edit live tasks/projects or create
+a project. Optional saved labels and deadlines can be explicitly cleared.
+
+The preview shows every before/after value, including unchanged evidence.
+Changing category requires choosing a compatible role or None and previews
+that category's current review eligibility. Historical context can explicitly
+override that eligibility. An unchanged historical category/role pair can
+retain a retired role; a new assignment requires an active role. Proposed new
+roles and measurement units remain in the draft until Save.
+
+**Save correction** requires a nonblank reason and a final Save/Edit answers/
+Discard draft choice. Back returns to the field picker; within Historical
+context it returns to that section or the correction picker. `:discard`, EOF,
+and Ctrl+C discard unconfirmed changes. Unchanged evidence saves nothing.
+Corrected evidence requires a nonblank outcome and finite measurements.
+
+Keeping the actual completion date preserves its exact timestamp. Keeping an
+unknown measurement preserves its reminder, even when overdue. Resolving it
+as Measured or Not applicable closes the reminder; choosing Not known yet
+requires a date today or later. Reminder-only date changes belong in
+Measurement follow-ups. The completion revision, new roles/units, and reminder
+changes save together or roll back together. If the revision or reminder
+changed while the draft was open, discard and select the record again.
+
+After saving, the browser reapplies your review filters to current revisions.
+A corrected record can therefore leave the selected period, category, role,
+or evidence-gap list. Inspection skips export refresh; a saved correction
+refreshes exports for the default database. An export failure explicitly says
+the correction was saved: retry export, not the correction. Database schema 5,
+brief format 2, and review format 4 are unchanged by this workflow.
 
 New completions save the task title, due date, project name, and category's
 review eligibility at capture time. Later edits to working tasks, projects,
