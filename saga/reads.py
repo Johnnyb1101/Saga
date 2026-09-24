@@ -177,9 +177,32 @@ def measure_usage(con):
     ).fetchall()
 
 
-def duties(con):
+def duties(con, category=None, include_inactive=False):
     """All registered duty names."""
-    return con.execute("SELECT name FROM duties ORDER BY name").fetchall()
+    if category is None:
+        return con.execute("SELECT name FROM duties ORDER BY name").fetchall()
+    return con.execute(
+        "SELECT duty AS name, status FROM category_roles WHERE category=? "
+        "AND (? OR status='active') ORDER BY name_key, duty",
+        (category, include_inactive),
+    ).fetchall()
+
+
+def unassigned_roles(con):
+    return con.execute("SELECT name FROM duties WHERE NOT EXISTS "
+                       "(SELECT 1 FROM category_roles WHERE duty=duties.name) ORDER BY name").fetchall()
+
+
+def role_catalog(con, category=None):
+    """Category-scoped availability and current completion counts, including retired roles."""
+    return con.execute(
+        """SELECT r.category, r.duty, r.status, count(c.id) AS completions
+           FROM category_roles r LEFT JOIN current_completions c
+             ON c.category=r.category AND c.duty=r.duty
+           WHERE (? IS NULL OR r.category=?)
+           GROUP BY r.category, r.duty
+           ORDER BY r.category, r.name_key, r.duty""", (category, category),
+    ).fetchall()
 
 
 def duty_usage(con):

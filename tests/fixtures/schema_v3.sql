@@ -164,16 +164,4 @@ BEGIN
         (SELECT task_id FROM completions WHERE id = NEW.supersedes_id);
 END;
 
-CREATE TABLE category_roles (
-    category TEXT NOT NULL REFERENCES categories(name),
-    duty TEXT NOT NULL REFERENCES duties(name),
-    name_key TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'retired', 'needs_review')),
-    PRIMARY KEY (category, duty)
-) STRICT;
-
-CREATE UNIQUE INDEX category_roles_active_name
-ON category_roles(category, name_key) WHERE status='active';
-
-PRAGMA user_version = 4;
+PRAGMA user_version = 3;

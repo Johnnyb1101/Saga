@@ -22,7 +22,7 @@ class BackupTests(unittest.TestCase):
     def test_recovery_preserves_records_schema_and_wal_data(self):
         with contextlib.closing(db.connect(self.source)) as con:
             con.execute("PRAGMA journal_mode=WAL")
-            writes.add_duty(con, "Operations")
+            writes.add_duty(con, "Operations", "work")
             writes.add_measure(con, "packages")
             task = writes.add_task(con, "Invented work", "work", duty="Operations")
             writes.complete_task(con, task, outcome="Invented result",

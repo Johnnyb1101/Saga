@@ -101,7 +101,7 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(tuple(task), ("Invented legacy task", None))
                 completion = con.execute("SELECT outcome, duty FROM completions").fetchone()
                 self.assertEqual(tuple(completion), ("Invented legacy outcome", None))
-                writes.add_duty(con, "Operations")
+                writes.add_duty(con, "Operations", "work")
                 task_id = writes.add_task(con, "New task", "work", duty="Operations")
                 completion_id = writes.complete_task(con, task_id)
                 self.assertEqual(con.execute("SELECT duty FROM completions WHERE id=?", (completion_id,)).fetchone()[0],

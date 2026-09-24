@@ -83,7 +83,7 @@ def cmd_add(args):
                               [row["name"] for row in reads.categories(con)])
     duty = args.duty
     if duty is None and guided:
-        duty = ask_duty(con)
+        duty = ask_duty(con, category)
     due = args.due
     if due is None and guided:
         due = ask("Due date (YYYY-MM-DD, blank for none)")
@@ -138,9 +138,9 @@ def ask_measure(con):
         except ValueError:
             print("  Enter a finite number (not NaN or infinity).")
 
-def ask_duty(con):
+def ask_duty(con, category):
     """Prompt for a duty. Returns None when none are registered."""
-    names = [row["name"] for row in reads.duties(con)]
+    names = [row["name"] for row in reads.duties(con, category)]
     if not names:
         return None
     choice = ask_choice("Duty", names + ["(none)"])
@@ -186,7 +186,7 @@ def cmd_log(args):
             if measure is None and quantity is None:
                 measure, quantity = ask_measure(con)
             if duty is None:
-                duty = ask_duty(con)
+                duty = ask_duty(con, category)
             if not flagged:
                 flagged = ask_yes_no("Review material?")
         completion_id = writes.add_completion(
@@ -220,7 +220,7 @@ def cmd_done(args):
         outcome = ask("Outcome")
         measure, quantity = ask_measure(con)
         if duty is None and task["duty"] is None:
-            duty = ask_duty(con)
+            duty = ask_duty(con, task["category"])
         flagged = ask_yes_no("Review material?")
 
     completion_id = writes.complete_task(
@@ -311,25 +311,27 @@ def cmd_measure(args):
 
 
 def cmd_duty(args):
-    con = db.connect(args.db)
+    with closing(db.connect(args.db)) as con:
+        if args.name:
+            if args.category is None:
+                raise ValueError("Choose --category when registering a role")
+            writes.add_duty(con, args.name, args.category)
+            print(f"Registered {args.name} in {args.category}.")
+            return
+        rows = reads.role_catalog(con, args.category)
+        for row in rows:
+            print(f"  {row['category']}: {row['duty']} [{row['status']}] — {row['completions']} completions")
+        for row in reads.unassigned_roles(con):
+            print(f"  Unassigned legacy role: {row['name']} — register it with --category")
+        if not rows and not reads.unassigned_roles(con):
+            print('No roles registered. Use duty "NAME" --category CATEGORY.')
 
-    if args.name:
-        writes.add_duty(con, args.name)
-        print(f"Registered {args.name}.")
-        return
 
-    rows = reads.duty_usage(con)
-    if not rows:
-        print('No duties registered. Add one with: saga duty "NAME"')
-        return
+def cmd_role_status(args):
+    with closing(db.connect(args.db)) as con:
+        writes.set_role_status(con, args.category, args.name, args.command == "activate-role")
+    print(f"Role {args.name}: {'active' if args.command == 'activate-role' else 'retired'} in {args.category}.")
 
-    print(f"DUTIES ({len(rows)})")
-    for row in rows:
-        if row["completions"] == 0:
-            print(f"  {row['name']:<34}{'-':>7}   never used")
-            continue
-        print(f"  {row['name']:<34}{row['completions']:>7,}   "
-              f"{plural(row['completions'], 'completion')}")
 
 def quantity_argument(raw):
     try:
@@ -683,7 +685,14 @@ def build_parser():
                                    "how much work is filed under it. Give it a name "
                                    "to register a new one.")
     p.add_argument("name", nargs="?", help="name of a new duty to register")
-    p.set_defaults(func=cmd_duty)
+    p.add_argument("-c", "--category", help="category for role registration or listing")
+    p.set_defaults(func=cmd_duty, refresh=False)
+
+    for command in ("retire-role", "activate-role"):
+        p = sub.add_parser(command, help="change a category-specific role's availability")
+        p.add_argument("name")
+        p.add_argument("-c", "--category", required=True)
+        p.set_defaults(func=cmd_role_status, refresh=False)
 
     p = sub.add_parser("review", help="totals and flagged work for a period",
                        description="Summarise the archive: volume, measure totals, "

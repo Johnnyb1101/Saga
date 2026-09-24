@@ -181,7 +181,7 @@ class GuidedTests(unittest.TestCase):
         self.assertIn("Confirm task context", output)
 
     def test_explicit_no_duty_does_not_inherit_task_duty(self):
-        writes.add_duty(self.con, "Operations")
+        writes.add_duty(self.con, "Operations", "work")
         task = self.task(duty="Operations")
         status, _ = self.run_menu(["3", "1", "1", "Finished", "1", "2", "1", "1", "2", "1", "0"])
         self.assertEqual(status, 0)

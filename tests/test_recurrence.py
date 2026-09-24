@@ -53,7 +53,7 @@ class RecurrenceTests(unittest.TestCase):
         db.init_db(self.path)
         self.con = db.connect(self.path)
         self.addCleanup(self.con.close)
-        writes.add_duty(self.con, "Operations")
+        writes.add_duty(self.con, "Operations", "work")
 
     def create(self, **kwargs):
         return writes.add_task(self.con, "Invented recurring task", "work", due_date="2020-01-31",
@@ -259,6 +259,7 @@ class RecurrenceMigrationTests(unittest.TestCase):
                     self.assertEqual(db.schema_version(con), 2)
                 script.write_text(original, encoding="utf-8")
                 db.migrate(path)
+            db.migrate(path)
             with contextlib.closing(db.connect(path)) as con:
-                self.assertEqual(db.schema_version(con), 3)
+                self.assertEqual(db.schema_version(con), db.SCHEMA_VERSION)
                 self.assertEqual(reads.recurrences(con), [])

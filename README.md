@@ -130,7 +130,7 @@ For an **existing** database after updating the code:
 ```
 
 Do not run `init` to upgrade: it refuses an existing file. The current database
-schema is version 3. Migration saves a local backup before pending changes
+schema is version 4. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
@@ -222,7 +222,9 @@ python main.py log "Outcome" -c work [--duty NAME] [--measure NAME] [--quantity 
 python main.py upcoming [--days 30]     # project deadlines approaching
 python main.py project "name" [--deadline DATE]
 python main.py measure ["NAME"]         # list measures, or register one
-python main.py duty ["NAME"]            # list duties, or register one
+python main.py duty ["NAME" --category NAME] # list roles, or register in a category
+python main.py retire-role "NAME" --category NAME
+python main.py activate-role "NAME" --category NAME
 python main.py review [--since DATE] [--until DATE] [--duty NAME]
 python main.py review --check-evidence [--since DATE] [--until DATE] [--duty NAME]
 python main.py completions [--since DATE] [--until DATE] [--duty NAME]
@@ -304,6 +306,53 @@ them. Export validation remains a final check, including for aggregate
 overflow from very large finite measurements. No existing evidence is
 automatically rewritten.
 
+## Category-linked roles and responsibilities
+
+Choose a category first, then choose one of its active roles. A role name can
+appear under more than one category; each category has its own availability
+status. New registrations reject duplicates within that category, ignoring
+capitalization and repeated or surrounding whitespace (including Unicode
+case folding). Retired names must be reactivated, not registered again.
+
+The guided main menu now has **Manage roles**. Choose a category to add,
+search, retire, or activate its roles. Long lists use search and pagination.
+Editing a draft's category requires explicitly choosing its role again.
+Choose None when no ongoing responsibility applies. Direct commands are:
+
+```powershell
+python main.py duty "Training" --category work
+python main.py duty --category work
+python main.py retire-role "Training" --category work
+python main.py activate-role "Training" --category work
+```
+
+Retirement hides a role from new assignments but preserves existing tasks and
+all archived evidence. Existing tasks can still be completed with that role;
+corrections can retain an unchanged historical category/role pair. Assigning
+a different pair requires an active role in the selected category. Stop any
+active recurring series using a role before retiring it. This prevents a
+future occurrence from acquiring a retired role. Other categories using the
+same name are unaffected.
+
+Schema version 4 adds category-role links without rewriting completion rows,
+original duty names, or correction chains. Migration derives links from all
+existing tasks, completion revisions, and recurring series. Unused legacy
+roles stay unassigned: use Manage roles to choose their category explicitly.
+Normalized-name collisions are marked `needs_review` and excluded from new
+assignments. Choose which spelling to activate and retire the others; nothing
+is silently merged. A conflicting active spelling must be retired before
+another is activated. A blank legacy name cannot be activated. Active series
+with a role needing review require resolution before another occurrence can
+be created, or can be stopped first. Historical queries still find every name.
+
+The new category checks apply through shared write functions, including direct
+commands; direct SQL bypasses application validation. Historical review filters
+such as `--duty "Training"` still span categories and include retired roles.
+Category/role report breakdowns and saved task-field editing are subsequent work.
+No export format change is needed: each accomplishment already includes its
+category and duty. Run `migrate` and then `export` before using upgraded code;
+the installed backup runner also requires the current database version.
+
 ## Task and project maintenance
 
 Use `list` to find a task id and `projects` to find a project id. `cancel`
@@ -354,7 +403,7 @@ project, stop its series and complete the last task, or cancel that task.
 Stopped series cannot be restarted or edited in this version; create a new
 series for a changed pattern. Records from the old series remain intact.
 
-Existing databases require `python main.py migrate` for schema version 3,
+Existing databases require `python main.py migrate` for schema version 4,
 followed by `python main.py export`. Existing tasks remain one-off tasks;
 no completion history is changed. Brief JSON task objects gain nullable
 `recurrence_id` and `occurrence_index` fields; existing fields remain intact.
@@ -512,13 +561,13 @@ a scheduled task exists or has run successfully on a particular machine.
 External consumers can read `brief.json` (format version 1), `brief.md`, and
 `review.json` (format version 2), with `manifest.json` (format version 1)
 describing the published set. These formats are separate from database
-schema version 3. The bundled morning script calls the core through the CLI;
+schema version 4. The bundled morning script calls the core through the CLI;
 it does not consume the JSON files.
 
 Most commands against the default database refresh exports before running
 when the manifest is missing or outdated, files are missing or damaged,
 hashes disagree, or JSON metadata has an unexpected type or version.
-`init`, `migrate`, `backup`, `export`, `correct`, `review --check-evidence`,
+`init`, `migrate`, `backup`, `export`, `correct`, `duty`, role-status commands, `review --check-evidence`,
 and help do not run that freshness check;
 `export` explicitly writes the files itself. Task/completion changes refresh
 exports afterward, but registering a measure or duty does not. Commands
