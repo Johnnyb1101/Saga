@@ -729,6 +729,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command is None:
+        if sys.stdin.isatty():
+            from saga.guided import run
+            return run(args.db)
         parser.print_help()
         return 1
 
