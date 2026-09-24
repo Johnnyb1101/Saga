@@ -244,6 +244,31 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
     return cur.lastrowid
 
 
+def edit_task(con, task_id, title, category, duty, project_id):
+    """Edit an open occurrence only; never alter its series or completion archive."""
+    if not title or not title.strip():
+        raise ValueError("Task title must not be blank")
+    title = title.strip()
+    with con:
+        task = con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if task is None or task['status'] != 'open':
+            raise ValueError("Only an existing open task can be edited")
+        require_role(con, category, duty,
+                     allow_inactive=(category, duty) == (task['category'], task['duty']))
+        if project_id != task['project_id']:
+            _require_project_accepts_tasks(con, project_id)
+        values = (title, category, duty, project_id)
+        if values == (task['title'], task['category'], task['duty'], task['project_id']):
+            raise ValueError("No changes to save; edit an answer or discard the draft")
+        changed = con.execute(
+            "UPDATE tasks SET title=?, category=?, duty=?, project_id=? WHERE id=? AND status='open'",
+            (*values, task_id),
+        )
+        if changed.rowcount != 1:
+            raise ValueError("Task is no longer open; select it again")
+    return task_id
+
+
 def save_guided(con, action, values, *, new_duty=None, new_measure=None,
                 new_project=None, expected_task=None):
     """Save a confirmed form and its new references as one transaction.
@@ -252,7 +277,7 @@ def save_guided(con, action, values, *, new_duty=None, new_measure=None,
     The existing action functions commit only after references and action succeed.
     """
     actions = {"add": add_task, "log": add_completion, "done": complete_task,
-               "reschedule": reschedule_task, "cancel": cancel_task}
+               "reschedule": reschedule_task, "cancel": cancel_task, "edit": edit_task}
     if action not in actions:
         raise ValueError("Unsupported guided action")
     if con.in_transaction:
