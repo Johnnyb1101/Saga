@@ -31,6 +31,30 @@ class Reference:
         return self.label + (" (new; saved only on confirmation)" if self.new else "")
 
 
+@dataclass(frozen=True)
+class Measurement:
+    status: str
+    unit: Reference
+    quantity: float | None = None
+    remind_on: str | None = None
+
+    def __str__(self):
+        if self.status == 'measured':
+            return f"{self.quantity:g} {self.unit}"
+        if self.status == 'unknown':
+            return f"Not known yet; remind me on {self.remind_on}"
+        return "Not applicable (narrative evidence)"
+
+
+def reminder_day():
+    while True:
+        value = answer("Remind me on (YYYY-MM-DD, today or later)")
+        try:
+            return writes.validate_reminder(value)
+        except ValueError as exc:
+            print(exc)
+
+
 def line(value):
     return " ".join(str(value).split())
 
@@ -113,6 +137,9 @@ def reference(con, kind, category_name=None):
         refs = [Reference(r["name"], r["name"]) for r in rows]
     choices = [("None / not applicable", Reference(None, "None / not applicable")),
                (f"Add a new {label}", "new"), *[(str(r), r) for r in refs]]
+    if kind == "measure":
+        choices[0] = ("Not applicable - this accomplishment has no useful numeric measure", Reference(None, "Not applicable"))
+        choices.append(("Not known yet - set a reminder", Reference(None, "Not known yet")))
     selected = pick(f"Choose {label}", choices)
     if selected == "new":
         while True:
@@ -150,11 +177,13 @@ def day(completed=False):
 def measurement(con):
     selected = reference(con, "measure")
     if selected.value is None:
-        return selected, None
+        if selected.label == 'Not known yet':
+            return Measurement('unknown', selected, remind_on=reminder_day())
+        return Measurement('not_applicable', selected)
     while True:
         raw = answer("Quantity (0 is an actual result; negative values and fractions are allowed)")
         try:
-            return selected, writes.validate_quantity(float(raw))
+            return Measurement("measured", selected, writes.validate_quantity(float(raw)))
         except ValueError:
             print("Enter a finite number, not NaN or infinity.")
 
@@ -273,8 +302,10 @@ def refs(draft):
         if selected.new:
             new[f"new_{kind}"] = selected.value
     if "measurement" in draft:
-        selected, quantity = draft["measurement"]
-        values.update(measure=None if selected.new else selected.value, quantity=quantity)
+        measurement = draft["measurement"]
+        selected = measurement.unit
+        values.update(measure=None if selected.new else selected.value, quantity=measurement.quantity,
+                      measurement_status=measurement.status, remind_on=measurement.remind_on)
         if selected.new:
             new["new_measure"] = selected.value
     return values, new
@@ -485,6 +516,57 @@ def task_action(con, path, task, action=None):
     form(f"{action.title()}: {line(task['title'])}", questions, save)
 
 
+def manage_followups(con, path):
+    rows = reads.measurement_followups(con)
+    if not rows:
+        print("No open measurement follow-ups.")
+        return
+    row = pick("Measurement follow-ups", [
+        ((f"{r['remind_on']} - {r['outcome'] or r['task_title'] or '(no outcome)'} "
+          f"[{r['category']}; {r['duty'] or 'no role'}; completed {r['completed_at'][:10]}; ID {r['id']}]") ,
+         dict(r)) for r in rows])
+    print(f"Work completed: {row['completed_at']}; original task deadline: {row['due_date'] or 'none'}")
+    print("Reminder overdue does not mean the work was completed late.")
+    action = choose("Follow-up action", [("Record measurement", "measured"),
+        ("Not applicable", "not_applicable"), ("Remind me later", "later")], cancel_label="Return")
+    if action == 'later':
+        def postpone(draft):
+            writes.reschedule_followup(con, row['id'], draft['remind_on'])
+            saved(con, path, "Reminder rescheduled. Work completion date unchanged.")
+        form("Reschedule reminder", [("remind_on", "Reminder date", reminder_day)], postpone)
+        return
+
+    def completion_date():
+        keep = choose("Actual completion date", [(f"Keep {row['completed_at']}", True),
+                                                 ("Correct the actual date", False)])
+        if keep:
+            return row['completed_at']
+        return day(completed=True) or dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    questions = [("completed_at", "Actual completion date", completion_date)]
+    if not row['outcome'] or not row['outcome'].strip():
+        questions.append(("outcome", "Outcome", lambda: answer("What happened and why did it matter?")))
+    if action == 'measured':
+        questions.append(("measurement", "Measurement", lambda: measurement(con)))
+    questions.append(("reason", "Correction reason", lambda: answer("Reason for this evidence update")))
+
+    def resolve(draft):
+        value = draft.get('measurement', Measurement('not_applicable', Reference(None, 'Not applicable')))
+        if value.status == 'unknown':
+            raise ValueError("Use Remind me later to postpone a follow-up")
+        unit = value.unit
+        changes = {'measurement_status': value.status, 'measure': None if unit.new else unit.value,
+                   'quantity': value.quantity, 'completed_at': draft['completed_at']}
+        if 'outcome' in draft:
+            changes['outcome'] = draft['outcome']
+        writes.resolve_followup(con, row['id'], row['completion_id'], draft['reason'],
+                                new_measure=unit.value if unit.new else None, **changes)
+        saved(con, path, "Evidence updated and follow-up resolved. No additional accomplishment counted.")
+
+    title = "Record measurement" if action == 'measured' else "Resolve follow-up: Not applicable"
+    form(title, questions, resolve)
+
+
 def manage_roles(con):
     selected = category(con)
     while True:
@@ -535,10 +617,13 @@ def run(path):
         with closing(db.connect(path)) as con:
             print("\nSAGA — guided daily workflow\nUse row numbers to select tasks; no IDs to remember.")
             while True:
+                due = reads.measurement_followups(con, due_only=True)
+                if due:
+                    print(f"\n{len(due)} measurement follow-up(s) due or overdue. Open Measurement follow-ups.")
                 try:
                     action = choose("Main menu", [("Browse tasks / today", "browse"), ("Add a task", "add"),
                         ("Complete a task", "done"), ("Record an accomplishment", "log"),
-                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles")],
+                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups")],
                         cancel_label="Exit")
                 except (Back, Cancel):
                     return 0
@@ -547,6 +632,8 @@ def run(path):
                         add_task(con, path)
                     elif action == "log":
                         capture(con, path)
+                    elif action == "followups":
+                        manage_followups(con, path)
                     elif action == "roles":
                         manage_roles(con)
                     else:

@@ -184,38 +184,114 @@ def validate_quantity(quantity):
     return quantity
 
 
-def _insert_completion(con, task_id, category, outcome, measure, quantity,
-                       flagged, completed_at, duty, allow_inactive=False):
-    """Shared INSERT for both completion paths. The caller owns the transaction."""
+def validate_reminder(remind_on):
+    try:
+        parsed = dt.date.fromisoformat(remind_on)
+    except (ValueError, TypeError):
+        raise ValueError("A reminder date in YYYY-MM-DD form is required") from None
+    if parsed.isoformat() != remind_on or parsed < dt.date.today():
+        raise ValueError("Reminder date must be today or later, in YYYY-MM-DD form")
+    return remind_on
+
+
+def measurement_state(measure, quantity, status=None):
     validate_quantity(quantity)
+    if status is None:
+        status = 'measured' if measure is not None or quantity is not None else 'unspecified'
+    if status not in ('measured', 'not_applicable', 'unknown', 'unspecified'):
+        raise ValueError("Invalid measurement status")
+    if status == 'measured' and measure is None and quantity is None:
+        raise ValueError("Measured requires a unit and quantity")
+    if status != 'measured' and (measure is not None or quantity is not None):
+        raise ValueError("Only Measured can have a unit and quantity; clear the measurement first")
+    return status
+
+
+def _followup(con, completion_id, status, remind_on, previous_id=None):
+    previous = con.execute("SELECT * FROM measurement_followups WHERE completion_id=?",
+                           (previous_id,)).fetchone() if previous_id is not None else None
+    if status == 'unknown':
+        if remind_on is None and previous is not None and previous['status'] == 'open':
+            remind_on = previous['remind_on']
+        else:
+            validate_reminder(remind_on)
+        if previous:
+            con.execute("UPDATE measurement_followups SET completion_id=?, remind_on=?, status='open', "
+                        "updated_at=datetime('now','localtime') WHERE id=?",
+                        (completion_id, remind_on, previous['id']))
+        else:
+            con.execute("INSERT INTO measurement_followups(completion_id,remind_on) VALUES (?,?)",
+                        (completion_id, remind_on))
+    else:
+        if remind_on is not None:
+            raise ValueError("A reminder date is only valid for Not known yet")
+        if previous:
+            con.execute("UPDATE measurement_followups SET completion_id=?, status='resolved', "
+                        "updated_at=datetime('now','localtime') WHERE id=?", (completion_id, previous['id']))
+
+
+def reschedule_followup(con, followup_id, remind_on):
+    validate_reminder(remind_on)
+    with con:
+        changed = con.execute("UPDATE measurement_followups SET remind_on=?, "
+                              "updated_at=datetime('now','localtime') WHERE id=? AND status='open'",
+                              (remind_on, followup_id))
+        if changed.rowcount != 1:
+            raise ValueError("Follow-up is missing or already resolved")
+
+
+def resolve_followup(con, followup_id, completion_id, reason, *, new_measure=None, **changes):
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        pending = con.execute("SELECT * FROM measurement_followups WHERE id=? AND status='open'",
+                              (followup_id,)).fetchone()
+        if pending is None or pending['completion_id'] != completion_id:
+            raise ValueError("Follow-up changed or was resolved; select it again")
+        if changes.get('measurement_status') not in ('measured', 'not_applicable'):
+            raise ValueError("Resolve with Measured or Not applicable")
+        if new_measure is not None:
+            con.execute("INSERT INTO measures(name) VALUES (?)", (new_measure,))
+            changes['measure'] = new_measure
+        return correct_completion(con, completion_id, reason, **changes)
+
+
+def _insert_completion(con, task_id, category, outcome, measure, quantity,
+                       flagged, completed_at, duty, allow_inactive=False,
+                       measurement_status=None, remind_on=None):
+    """Shared INSERT for both completion paths. The caller owns the transaction."""
+    measurement_status = measurement_state(measure, quantity, measurement_status)
     require_role(con, category, duty, allow_inactive)
-    return con.execute(
+    cur = con.execute(
         """
         INSERT INTO completions
             (task_id, category, completed_at, outcome, measure, quantity,
              flagged, duty, task_title, due_date, project_name, review_counting,
-             recorded_at)
+             recorded_at, measurement_status)
         VALUES (?, ?, COALESCE(?, datetime('now', 'localtime')), ?, ?, ?, ?, ?,
                 (SELECT title FROM tasks WHERE id = ?),
                 (SELECT due_date FROM tasks WHERE id = ?),
                 (SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ?),
                 (SELECT counts_toward_review FROM categories WHERE name = ?),
-                datetime('now', 'localtime'))
+                datetime('now', 'localtime'), ?)
         """,
         (task_id, category, completed_at, outcome, measure, quantity,
-         int(flagged), duty, task_id, task_id, task_id, category),
+         int(flagged), duty, task_id, task_id, task_id, category, measurement_status),
     )
+    _followup(con, cur.lastrowid, measurement_status, remind_on)
+    return cur
 
 def add_completion(con, category, outcome=None, measure=None, quantity=None,
-                   flagged=False, completed_at=None, duty=None):
+                   flagged=False, completed_at=None, duty=None, measurement_status=None, remind_on=None):
     """Archive work that was never a task. Returns the completion id."""
     with con:
         cur = _insert_completion(con, None, category, outcome, measure,
-                                 quantity, flagged, completed_at, duty)
+                                 quantity, flagged, completed_at, duty,
+                                 measurement_status=measurement_status, remind_on=remind_on)
     return cur.lastrowid
 
 def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
-                  flagged=False, completed_at=None, duty=None, inherit_duty=True):
+                  flagged=False, completed_at=None, duty=None, inherit_duty=True,
+                  measurement_status=None, remind_on=None):
     """Archive a completion and close the task. Returns the completion id."""
     task = con.execute(
         "SELECT status, category, duty, recurrence_id, occurrence_index FROM tasks WHERE id = ?", (task_id,)
@@ -230,7 +306,8 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
         cur = _insert_completion(con, task_id, task["category"], outcome,
                                  measure, quantity, flagged, completed_at,
                                  task["duty"] if duty is None and inherit_duty else duty,
-                                 allow_inactive=(duty == task["duty"] or duty is None and inherit_duty))
+                                 allow_inactive=(duty == task["duty"] or duty is None and inherit_duty),
+                                 measurement_status=measurement_status, remind_on=remind_on)
         changed = con.execute("UPDATE tasks SET status = 'done' WHERE id = ? AND status='open'", (task_id,))
         if changed.rowcount != 1:
             raise ValueError(f"Task {task_id} is no longer open.")
@@ -312,11 +389,11 @@ def save_guided(con, action, values, *, new_duty=None, new_measure=None,
 
 CORRECTION_FIELDS = (
     "category", "completed_at", "outcome", "measure", "quantity", "flagged", "duty",
-    "task_title", "due_date", "project_name", "review_counting",
+    "task_title", "due_date", "project_name", "review_counting", "measurement_status",
 )
 
 
-def correct_completion(con, completion_id, reason, **changes):
+def correct_completion(con, completion_id, reason, remind_on=None, **changes):
     """Append a replacement of the latest revision, retaining all original rows."""
     if not reason or not reason.strip():
         raise ValueError("a nonblank correction reason is required")
@@ -330,6 +407,11 @@ def correct_completion(con, completion_id, reason, **changes):
             raise ValueError(f"Completion {completion_id} is missing or superseded; use completions/history to find its latest id.")
         values = dict(original)
         values.update(changes)
+        if 'measurement_status' not in changes and ('measure' in changes or 'quantity' in changes):
+            values['measurement_status'] = None
+        values['measurement_status'] = measurement_state(values['measure'], values['quantity'], values['measurement_status'])
+        if original['measurement_status'] == 'unknown' and values['measurement_status'] == 'unspecified':
+            raise ValueError("Resolve the pending measurement as Measured or Not applicable, or reschedule it")
         require_role(con, values['category'], values['duty'],
                      allow_inactive=(values['category'], values['duty']) == (original['category'], original['duty']))
         validate_quantity(values["quantity"])
@@ -346,10 +428,11 @@ def correct_completion(con, completion_id, reason, **changes):
         cur = con.execute(
             """INSERT INTO completions
                 (task_id, category, completed_at, outcome, measure, quantity, flagged, duty,
-                 task_title, due_date, project_name, review_counting, snapshot_source,
+                 task_title, due_date, project_name, review_counting, measurement_status, snapshot_source,
                  recorded_at, supersedes_id, correction_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)""",
             (values["task_id"], *(values[field] for field in CORRECTION_FIELDS),
              values["snapshot_source"], completion_id, reason.strip()),
         )
+        _followup(con, cur.lastrowid, values['measurement_status'], remind_on, completion_id)
     return cur.lastrowid

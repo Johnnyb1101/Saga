@@ -130,7 +130,7 @@ For an **existing** database after updating the code:
 ```
 
 Do not run `init` to upgrade: it refuses an existing file. The current database
-schema is version 4. Migration saves a local backup before pending changes
+schema is version 5. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
@@ -272,6 +272,57 @@ valid; choose values appropriate to the measure. Guided entry asks again
 after an invalid number. Rejected quantities do not create a completion,
 close a task, advance recurrence, or append a correction.
 
+### Narrative evidence and measurement reminders
+
+A useful accomplishment does not need a numeric result. The guided menu
+requires an explicit measurement choice:
+
+- **Measured:** choose or add a unit and enter a finite number; zero is valid.
+- **Not applicable:** there is no useful numeric measure. Describe the result
+  and why it mattered in the required outcome.
+- **Not known yet:** the result is expected later. Enter a reminder date,
+  today or later; the accomplishment and reminder save together.
+
+**Unspecified** identifies older entries or direct commands that omitted a
+measurement decision. Migration 5 labels existing numbers Measured and empty
+measurements Unspecified, without guessing intent or creating reminders.
+It preserves all previously recorded evidence and correction history.
+
+Open **Measurement follow-ups** from the main menu to select a reminder by
+row number. Record the number, choose Not applicable, or set a new reminder
+date. Resolving appends an evidence correction and closes the reminder in one
+transaction; it never counts another accomplishment. Due and overdue reminders
+appear at menu startup, in `today`, and in the morning brief, and remain visible
+until resolved or rescheduled. These are in-app/brief reminders; Saga does not
+send background push notifications. Future reminders remain in the follow-up list.
+
+The reminder date is separate from the **actual completion date**. When closing
+a task, enter when the work actually finished, even if recording it later.
+Reports compare that date against the saved task deadline: early or on-time
+work remains on time even when entered after the deadline. Resolving a reminder
+preserves the actual completion date by default and offers an explicit date
+correction. Entry time is retained separately; a late measurement does not
+make the work late. Review periods also use the actual completion date.
+
+Direct-command equivalents (substitute your ids and dates):
+
+```powershell
+python main.py log "Simplified the handoff process" -c work --measurement-status not_applicable
+python main.py done 12 --outcome "Completed the audit" --date 2026-09-01 --measurement-status unknown --remind-on 2026-10-01
+python main.py followups
+python main.py reschedule-followup 3 --date 2026-10-08
+python main.py correct 18 --reason "Result confirmed" --measure "items" --quantity 0
+python main.py correct 19 --reason "No useful numeric measure" --measurement-status not_applicable --clear-measure
+```
+
+Register a unit with `measure "items"` before using it in direct commands.
+`correct` takes the latest **completion id**, while `reschedule-followup`
+takes the **reminder id** shown by `followups`. The guided menu handles those
+ids for you. Direct `log`/`done` commands infer Measured from a unit and number;
+omitting both without a status remains Unspecified for compatibility.
+Run `python main.py migrate` and then `python main.py export` to upgrade an
+existing database before using these features or its scheduled backup runner.
+
 ### Checking review evidence
 
 ```powershell
@@ -279,8 +330,10 @@ python main.py review --check-evidence --since 2026-01-01
 python main.py review --check-evidence --duty "Operations"
 ```
 
-This mode lists current completion ids with missing outcomes, duties, or
-measurements, plus any non-finite quantities already in the archive. It
+This mode lists current completion ids with missing outcomes or duties,
+unspecified measurements, pending measurement follow-ups, and any non-finite
+quantities already in the archive. Explicit Not applicable is not a
+measurement gap. It
 examines entries whose saved context counts toward review or which are
 flagged, applying the same inclusive date and duty filters as review.
 Superseded revisions are excluded before filtering. A duty filter excludes
@@ -478,9 +531,9 @@ New records are marked `captured`, including backdated work entered today.
 `recorded_at` is the entry time; `completed_at` is when the work happened.
 
 After migrating, run `python main.py export` to regenerate existing exports.
-The review JSON format is now version 2: flagged items include snapshot
-provenance and predecessor ids, and totals count current revisions only.
-The brief JSON format remains version 1.
+Review JSON format 3 includes measurement-state counts and status on flagged
+items, alongside snapshot provenance and predecessor ids. Totals count current
+revisions only. Brief JSON format 2 includes due measurement follow-ups.
 
 ## Backup and recovery
 
@@ -578,10 +631,10 @@ project's Python interpreter and `morning.py`; choose the desired time and
 missed-run behavior there. The repository alone does not establish whether
 a scheduled task exists or has run successfully on a particular machine.
 
-External consumers can read `brief.json` (format version 1), `brief.md`, and
-`review.json` (format version 2), with `manifest.json` (format version 1)
+External consumers can read `brief.json` (format version 2), `brief.md`, and
+`review.json` (format version 3), with `manifest.json` (format version 1)
 describing the published set. These formats are separate from database
-schema version 4. The bundled morning script calls the core through the CLI;
+schema version 5. The bundled morning script calls the core through the CLI;
 it does not consume the JSON files.
 
 Most commands against the default database refresh exports before running
@@ -698,7 +751,8 @@ and exports. The version-zero schema in
 `tests/fixtures/schema_v0.sql` is frozen from commit `7ff0f99^`; keep it
 independent of the current schema. `tests/fixtures/schema_v1.sql` preserves
 the schema before archive history was introduced, and `schema_v2.sql` preserves
-the schema before recurrence. Migration tests also inject failures to
+the schema before recurrence. `schema_v4.sql` preserves the schema before
+measurement states and follow-ups. Migration tests also inject failures to
 verify rollback of schema, records, and version, and successful retry.
 Export tests cover snapshot consistency, staging/replacement failures,
 manifest validation, invalid numbers, and successful retry. File replacement

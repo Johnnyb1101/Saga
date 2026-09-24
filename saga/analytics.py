@@ -14,7 +14,7 @@ import math
 def evidence_gaps(con, since=None, until=None, duty=None):
     """Review prompts for current, review-relevant evidence; never change records."""
     rows = con.execute(
-        """SELECT id, completed_at, outcome, task_title, duty, measure, quantity
+        """SELECT id, completed_at, outcome, task_title, duty, measure, quantity, measurement_status
            FROM current_completions
            WHERE (review_counting = 1 OR flagged = 1)
              AND (? IS NULL OR date(completed_at) >= ?)
@@ -31,7 +31,10 @@ def evidence_gaps(con, since=None, until=None, duty=None):
         if row["duty"] is None:
             reasons.append("missing duty")
         if row["measure"] is None or row["quantity"] is None:
-            reasons.append("missing measurement")
+            if row['measurement_status'] == 'unknown':
+                reasons.append("measurement follow-up pending")
+            elif row['measurement_status'] != 'not_applicable':
+                reasons.append("measurement unspecified")
         elif not math.isfinite(row["quantity"]):
             reasons.append("invalid quantity (not finite)")
         if reasons:
@@ -123,6 +126,7 @@ def flagged_work(con, since=None, until=None, duty=None):
                c.outcome,
                c.measure,
                c.quantity,
+               c.measurement_status,
                c.duty,
                c.task_title,
                c.project_name,
@@ -137,3 +141,15 @@ def flagged_work(con, since=None, until=None, duty=None):
         """,
         (since, since, until, until, duty, duty),
     ).fetchall()
+
+
+def measurement_states(con, since=None, until=None, duty=None):
+    rows = con.execute(
+        """SELECT measurement_status, count(*) AS count FROM current_completions
+           WHERE (? IS NULL OR date(completed_at)>=?) AND (? IS NULL OR date(completed_at)<=?)
+             AND (? IS NULL OR duty=?) GROUP BY measurement_status""",
+        (since, since, until, until, duty, duty),
+    ).fetchall()
+    counts = dict.fromkeys(('measured', 'not_applicable', 'unknown', 'unspecified'), 0)
+    counts.update({r['measurement_status']: r['count'] for r in rows})
+    return counts

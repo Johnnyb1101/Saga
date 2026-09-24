@@ -183,7 +183,7 @@ def cmd_log(args):
         measure, quantity = args.measure, args.quantity
         duty, flagged = args.duty, args.flag
         if guided:
-            if measure is None and quantity is None:
+            if measure is None and quantity is None and args.measurement_status is None:
                 measure, quantity = ask_measure(con)
             if duty is None:
                 duty = ask_duty(con, category)
@@ -191,7 +191,8 @@ def cmd_log(args):
                 flagged = ask_yes_no("Review material?")
         completion_id = writes.add_completion(
             con, category, outcome=outcome.strip(), measure=measure,
-            quantity=quantity, flagged=flagged, completed_at=completed_at, duty=duty)
+            quantity=quantity, flagged=flagged, completed_at=completed_at, duty=duty,
+            measurement_status=args.measurement_status, remind_on=args.remind_on)
         print(f"Logged completion {completion_id}.")
         maybe_export(args, con)
 
@@ -206,7 +207,7 @@ def cmd_done(args):
         raise ValueError(f"Task {args.task_id} is already {task['status']}.")
 
     guided = (args.outcome is None and args.measure is None
-              and args.quantity is None and not args.flag)
+              and args.quantity is None and not args.flag and args.measurement_status is None)
 
     print(f"Task {task['id']}: {task['title']}  [{task['category']}]")
 
@@ -225,7 +226,8 @@ def cmd_done(args):
 
     completion_id = writes.complete_task(
         con, task["id"], outcome=outcome, measure=measure,
-        quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at)
+        quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at,
+        measurement_status=args.measurement_status, remind_on=args.remind_on)
     print(f"Logged completion {completion_id}.")
     if task["recurrence_id"] is not None:
         following = reads.open_occurrence(con, task["recurrence_id"])
@@ -279,7 +281,7 @@ def cmd_correct(args):
             raise ValueError("--clear-measure cannot be combined with --measure or --quantity")
         changes.update(measure=None, quantity=None)
     with closing(db.connect(args.db)) as con:
-        revision = writes.correct_completion(con, args.completion_id, args.reason, **changes)
+        revision = writes.correct_completion(con, args.completion_id, args.reason, remind_on=args.remind_on, **changes)
         print(f"Logged correction {revision}, superseding completion {args.completion_id}.")
         maybe_export(args, con)
 
@@ -369,6 +371,10 @@ def cmd_review(args):
         print(f"DUTY           {duty}")
     print()
 
+    print("MEASUREMENT STATUS (narrative evidence remains valid without a number)")
+    for status, count in analytics.measurement_states(con, since, until, duty).items():
+        print(f"  {status.replace('_', ' ')}: {count}")
+    print()
     counts = analytics.volume(con, since, until, duty)
     print("VOLUME")
     print(f"  {counts['completions']:>7,} completions")
@@ -452,8 +458,32 @@ def cmd_migrate(args):
     for line in db.migrate(args.db) or ["Already up to date."]:
         print(line)
 
+def show_followups(con, due_only=False):
+    rows = reads.measurement_followups(con, due_only=due_only)
+    if rows:
+        print("MEASUREMENT FOLLOW-UPS" + (" DUE" if due_only else ""))
+        for row in rows:
+            print(f"  {row['id']}  reminder {row['remind_on']}  {row['outcome'] or row['task_title'] or '(no outcome)'}")
+            print(f"     Work completed {row['completed_at'][:10]}; original deadline {row['due_date'] or 'none'}")
+    elif not due_only:
+        print("No open measurement follow-ups.")
+
+
+def cmd_followups(args):
+    with closing(db.connect(args.db)) as con:
+        show_followups(con)
+
+
+def cmd_reschedule_followup(args):
+    with closing(db.connect(args.db)) as con:
+        writes.reschedule_followup(con, args.followup_id, args.date)
+        print("Reminder rescheduled; accomplishment date unchanged.")
+        maybe_export(args, con)
+
+
 def cmd_today(args):
     con = db.connect(args.db)
+    show_followups(con, due_only=True)
     late = reads.overdue(con)
     due = reads.due_today(con)
     soon = reads.due_soon(con, days=args.days)
@@ -471,7 +501,7 @@ def cmd_today(args):
         print_tasks(soon, mode="soon")
         print()
     if not (late or due or soon):
-        print(f"Nothing due in the next {args.days} days.")
+        print(f"No open tasks due in the next {args.days} days.")
 
 def cmd_list(args):
     con = db.connect(args.db)
@@ -615,6 +645,8 @@ def build_parser():
     p.add_argument("--quantity", type=quantity_argument, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
     p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
+    p.add_argument("--measurement-status", choices=("measured", "not_applicable", "unknown", "unspecified"))
+    p.add_argument("--remind-on", metavar="DATE", help="required reminder date for unknown measurement")
     p.set_defaults(func=cmd_done)
 
     p = sub.add_parser("log", help="record an accomplishment without a task",
@@ -626,6 +658,8 @@ def build_parser():
     p.add_argument("--quantity", type=quantity_argument, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
     p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
+    p.add_argument("--measurement-status", choices=("measured", "not_applicable", "unknown", "unspecified"))
+    p.add_argument("--remind-on", metavar="DATE", help="required reminder date for unknown measurement")
     p.set_defaults(func=cmd_log)
 
     p = sub.add_parser("completions", help="list current accomplishments with ids")
@@ -655,6 +689,8 @@ def build_parser():
     p.add_argument("--clear-measure", action="store_true", help="remove both measure and quantity")
     p.add_argument("--flag", dest="flagged", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
     p.add_argument("--review-counting", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
+    p.add_argument("--measurement-status", choices=("measured", "not_applicable", "unknown", "unspecified"), default=argparse.SUPPRESS)
+    p.add_argument("--remind-on", metavar="DATE")
     # Repairs must work even when old invalid evidence prevents exporting.
     p.set_defaults(func=cmd_correct, refresh=False)
 
@@ -720,6 +756,13 @@ def build_parser():
     p.add_argument("--out", type=Path, required=True, metavar="DIR",
                    help="backup directory (prefer a separate drive or synced folder)")
     p.set_defaults(func=cmd_backup, refresh=False)
+
+    p = sub.add_parser("followups", help="list pending measurement reminders")
+    p.set_defaults(func=cmd_followups, refresh=False)
+    p = sub.add_parser("reschedule-followup", help="move a reminder without changing completion dates")
+    p.add_argument("followup_id", type=int)
+    p.add_argument("--date", required=True)
+    p.set_defaults(func=cmd_reschedule_followup, refresh=False)
 
     p = sub.add_parser("init", help="create the database (first run only)",
                        description="Create a new database. Refuses if one already exists.")

@@ -135,9 +135,6 @@ CREATE TABLE completions (
         OR (supersedes_id IS NOT NULL AND correction_reason IS NOT NULL
             AND length(trim(correction_reason)) > 0)),
 
-    measurement_status TEXT NOT NULL DEFAULT 'unspecified'
-        CHECK (measurement_status IN ('measured', 'not_applicable', 'unknown', 'unspecified')),
-
     CHECK ((measure IS NULL) = (quantity IS NULL))
 ) STRICT;
 
@@ -179,12 +176,4 @@ CREATE TABLE category_roles (
 CREATE UNIQUE INDEX category_roles_active_name
 ON category_roles(category, name_key) WHERE status='active';
 
-CREATE TABLE measurement_followups (
-    id INTEGER PRIMARY KEY,
-    completion_id INTEGER NOT NULL UNIQUE REFERENCES completions(id),
-    remind_on TEXT NOT NULL CHECK (date(remind_on) IS remind_on),
-    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-) STRICT;
-PRAGMA user_version = 5;
+PRAGMA user_version = 4;
