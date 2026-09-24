@@ -6,6 +6,30 @@ Date parameters default to today when omitted. They exist so that tests
 can pin a date instead of depending on when they happen to run.
 """
 
+import datetime as dt
+
+
+def validate_review_scope(con, since=None, until=None, duty=None, category=None, unassigned=False):
+    """Validate review selectors before inspection or export side effects."""
+    for value in (since, until):
+        if value is not None:
+            try:
+                if dt.date.fromisoformat(value).isoformat() != value:
+                    raise ValueError
+            except ValueError:
+                raise ValueError("Review dates must use valid YYYY-MM-DD dates") from None
+    if since is not None and until is not None and since > until:
+        raise ValueError("Review start must not be after review end")
+    if category is not None and not con.execute(
+            "SELECT 1 FROM categories WHERE name=?", (category,)).fetchone():
+        raise ValueError(f"Unknown category: {category}")
+    if duty is not None and not con.execute(
+            "SELECT 1 FROM duties WHERE name=?", (duty,)).fetchone():
+        raise ValueError(f"Unknown duty: {duty}")
+    if duty is not None and unassigned:
+        raise ValueError("Choose a duty or no role assigned, not both")
+
+
 def get_task(con, task_id):
     """One task by id, or None if there is no such task."""
     return con.execute(
@@ -24,15 +48,17 @@ def measurement_followups(con, due_only=False, on=None):
     ).fetchall()
 
 
-def completion_list(con, since=None, until=None, duty=None):
+def completion_list(con, since=None, until=None, duty=None, category=None, unassigned=False):
     """Latest revisions only, with ids for inspection and correction."""
+    validate_review_scope(con, since, until, duty, category, unassigned)
     return con.execute(
         """SELECT * FROM current_completions
            WHERE (? IS NULL OR date(completed_at) >= ?)
              AND (? IS NULL OR date(completed_at) <= ?)
              AND (? IS NULL OR duty = ?)
+             AND (? IS NULL OR category = ?) AND (? = 0 OR duty IS NULL)
            ORDER BY completed_at DESC, id DESC""",
-        (since, since, until, until, duty, duty),
+        (since, since, until, until, duty, duty, category, category, int(unassigned)),
     ).fetchall()
 
 

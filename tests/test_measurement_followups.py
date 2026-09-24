@@ -174,7 +174,7 @@ class MeasurementTests(unittest.TestCase):
         export.write_all(self.con, destination)
         brief = json.loads((destination / 'brief.json').read_text(encoding='utf-8'))
         review = json.loads((destination / 'review.json').read_text(encoding='utf-8'))
-        self.assertEqual((brief['schema_version'], review['schema_version']), (2, 3))
+        self.assertEqual((brief['schema_version'], review['schema_version']), (2, 4))
         self.assertEqual(brief['measurement_followups'][0]['completed_at'], '2020-01-01 00:00:00')
         self.assertEqual(review['measurement_states']['unknown'], 1)
         self.assertEqual(review['flagged'][0]['measurement_status'], 'unknown')
