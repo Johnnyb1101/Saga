@@ -7,6 +7,7 @@ All SQL uses ? placeholders. Values are never formatted into a statement.
 """
 
 import datetime as dt
+import math
 
 from saga.recurrence import occurrence_date
 
@@ -124,9 +125,17 @@ def add_duty(con, name):
         con.execute("INSERT INTO duties (name) VALUES (?)", (name,))
     return name
 
+def validate_quantity(quantity):
+    """Reject non-finite measurements before SQLite can store or coerce them."""
+    if quantity is not None and not math.isfinite(quantity):
+        raise ValueError("quantity must be a finite number (not NaN or infinity)")
+    return quantity
+
+
 def _insert_completion(con, task_id, category, outcome, measure, quantity,
                        flagged, completed_at, duty):
     """Shared INSERT for both completion paths. The caller owns the transaction."""
+    validate_quantity(quantity)
     return con.execute(
         """
         INSERT INTO completions
@@ -201,6 +210,7 @@ def correct_completion(con, completion_id, reason, **changes):
             raise ValueError(f"Completion {completion_id} is missing or superseded; use completions/history to find its latest id.")
         values = dict(original)
         values.update(changes)
+        validate_quantity(values["quantity"])
         if not values["outcome"] or not values["outcome"].strip():
             raise ValueError("a corrected completion must have a nonblank outcome")
         if "category" in changes and changes["category"] != original["category"] and "review_counting" not in changes:

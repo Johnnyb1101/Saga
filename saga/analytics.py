@@ -8,6 +8,37 @@ the raw timestamp against a bare date silently drops everything recorded
 after midnight on the closing day.
 """
 
+import math
+
+
+def evidence_gaps(con, since=None, until=None, duty=None):
+    """Review prompts for current, review-relevant evidence; never change records."""
+    rows = con.execute(
+        """SELECT id, completed_at, outcome, task_title, duty, measure, quantity
+           FROM current_completions
+           WHERE (review_counting = 1 OR flagged = 1)
+             AND (? IS NULL OR date(completed_at) >= ?)
+             AND (? IS NULL OR date(completed_at) <= ?)
+             AND (? IS NULL OR duty = ?)
+           ORDER BY completed_at DESC, id DESC""",
+        (since, since, until, until, duty, duty),
+    ).fetchall()
+    gaps = []
+    for row in rows:
+        reasons = []
+        if not row["outcome"] or not row["outcome"].strip():
+            reasons.append("missing outcome")
+        if row["duty"] is None:
+            reasons.append("missing duty")
+        if row["measure"] is None or row["quantity"] is None:
+            reasons.append("missing measurement")
+        elif not math.isfinite(row["quantity"]):
+            reasons.append("invalid quantity (not finite)")
+        if reasons:
+            gaps.append({**dict(row), "reasons": reasons})
+    return gaps
+
+
 def measure_totals(con, since=None, until=None, duty=None):
     """Each measure with its summed quantity and how many occasions produced it."""
     return con.execute(

@@ -196,7 +196,12 @@ class ExportTests(unittest.TestCase):
         export.write_all(self.con, self.output)
         before = self.snapshot()
         writes.add_measure(self.con, "units")
-        writes.add_completion(self.con, "work", measure="units", quantity=float("inf"))
+        # Simulate legacy data that predates finite-number validation.
+        self.con.execute(
+            "INSERT INTO completions(category, measure, quantity) VALUES ('work', 'units', ?)",
+            (float("inf"),),
+        )
+        self.con.commit()
         with self.assertRaisesRegex(export.ExportError, "JSON"):
             export.write_all(self.con, self.output)
         self.assertEqual(self.snapshot(), before)

@@ -134,9 +134,9 @@ def ask_measure(con):
     while True:
         raw = ask("Quantity", default="1")
         try:
-            return choice, float(raw)
+            return choice, writes.validate_quantity(float(raw))
         except ValueError:
-            print("  Enter a number.")
+            print("  Enter a finite number (not NaN or infinity).")
 
 def ask_duty(con):
     """Prompt for a duty. Returns None when none are registered."""
@@ -331,7 +331,32 @@ def cmd_duty(args):
         print(f"  {row['name']:<34}{row['completions']:>7,}   "
               f"{plural(row['completions'], 'completion')}")
 
+def quantity_argument(raw):
+    try:
+        return writes.validate_quantity(float(raw))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def cmd_review(args):
+    if args.check_evidence:
+        with closing(db.connect(args.db)) as con:
+            if args.duty is not None:
+                require_duty(con, args.duty)
+            gaps = analytics.evidence_gaps(con, args.since, args.until, args.duty)
+        print(f"EVIDENCE CHECK  {args.since or 'the beginning'} to {args.until or 'today'}")
+        if args.duty:
+            print(f"DUTY           {args.duty}")
+        print("Review-counting or flagged entries; missing fields are prompts, not requirements.")
+        if not gaps:
+            print("No evidence gaps found in the selected current entries.")
+        for row in gaps:
+            title = (row['outcome'] or '').strip() or row['task_title'] or '(no outcome)'
+            print(f"  {row['id']:>4}  {row['completed_at'][:10]}  {title}")
+            print(f"        {'; '.join(row['reasons'])}")
+        if gaps:
+            print("Use correct ID --reason ... to append evidence; history retains originals.")
+        return
     con = db.connect(args.db)
     since, until, duty = args.since, args.until, args.duty
     if duty is not None:
@@ -585,7 +610,7 @@ def build_parser():
     p.add_argument("--outcome", help="what happened")
     p.add_argument("--measure", metavar="NAME", help="a registered measure")
     p.add_argument("--duty", metavar="NAME", help="a registered duty")
-    p.add_argument("--quantity", type=float, metavar="N", help="how many")
+    p.add_argument("--quantity", type=quantity_argument, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
     p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
     p.set_defaults(func=cmd_done)
@@ -596,7 +621,7 @@ def build_parser():
     p.add_argument("-c", "--category", help="category name")
     p.add_argument("--duty", metavar="NAME", help="a registered duty")
     p.add_argument("--measure", metavar="NAME", help="a registered measure")
-    p.add_argument("--quantity", type=float, metavar="N", help="how many")
+    p.add_argument("--quantity", type=quantity_argument, metavar="N", help="how many")
     p.add_argument("--flag", action="store_true", help="mark as review material")
     p.add_argument("--date", metavar="DATE", help="completion day, YYYY-MM-DD (default: now)")
     p.set_defaults(func=cmd_log)
@@ -624,11 +649,12 @@ def build_parser():
         group.add_argument(f"--clear-{name}", dest=name.replace('-', '_'),
                            action="store_const", const=None, default=argparse.SUPPRESS)
     p.add_argument("--measure", default=argparse.SUPPRESS)
-    p.add_argument("--quantity", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--quantity", type=quantity_argument, default=argparse.SUPPRESS)
     p.add_argument("--clear-measure", action="store_true", help="remove both measure and quantity")
     p.add_argument("--flag", dest="flagged", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
     p.add_argument("--review-counting", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
-    p.set_defaults(func=cmd_correct)
+    # Repairs must work even when old invalid evidence prevents exporting.
+    p.set_defaults(func=cmd_correct, refresh=False)
 
     p = sub.add_parser("upcoming", help="project deadlines approaching",
                        description="Active projects with a deadline inside the window, "
@@ -665,6 +691,8 @@ def build_parser():
     p.add_argument("--since", metavar="DATE", help="start of the period, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="end of the period, YYYY-MM-DD")
     p.add_argument("--duty", metavar="NAME", help="only work filed under this duty")
+    p.add_argument("--check-evidence", action="store_true",
+                   help="list missing evidence and invalid quantities instead of totals")
     p.set_defaults(func=cmd_review)
 
     p = sub.add_parser("export", help="regenerate exports/ for outside consumers",
@@ -705,7 +733,7 @@ def main(argv=None):
         return 1
 
     try:
-        if args.refresh:
+        if args.refresh and not (args.command == "review" and args.check_evidence):
             refresh_if_stale(args)
         args.func(args)
     except (FileNotFoundError, FileExistsError, ValueError) as exc:
