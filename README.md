@@ -85,7 +85,7 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Morning brief script (scheduler setup is machine-specific)
 
 The guided terminal interface covers daily capture and task selection.
-Remaining work includes task-field editing, distinct unknown/not-applicable
+Remaining work includes distinct unknown/not-applicable
 evidence states, consistent connection cleanup, and export-destination configuration.
 A future graphical interface will use the same core functions.
 
@@ -189,8 +189,8 @@ exits and discards unconfirmed answers. Existing direct commands and their
 prompt behavior remain available; scripts without a terminal still receive
 help rather than entering the menu.
 
-This first menu does not edit saved task titles/categories/projects, close
-projects, stop series independently, or guide review/corrections; use the
+This menu does not close projects, stop series independently, or guide
+review/corrections; use the
 existing direct commands where supported. Adding a project within a task form
 records its name only. Standalone accomplishments do not acquire a project
 through this menu. `None / not applicable` is one stored empty state: distinct
@@ -348,12 +348,32 @@ be created, or can be stopped first. Historical queries still find every name.
 The new category checks apply through shared write functions, including direct
 commands; direct SQL bypasses application validation. Historical review filters
 such as `--duty "Training"` still span categories and include retired roles.
-Category/role report breakdowns and saved task-field editing are subsequent work.
+Category/role report breakdowns are subsequent work.
 No export format change is needed: each accomplishment already includes its
 category and duty. Run `migrate` and then `export` before using upgraded code;
 the installed backup runner also requires the current database version.
 
 ## Task and project maintenance
+
+To edit an open task, launch the guided menu, choose **Browse tasks / today**,
+select its row, then choose **Edit task**. You can keep or change its title,
+category, role/responsibility, and project. The preview shows before/after
+values and marks unchanged fields. Choose Save, Edit answers, or Discard draft.
+New roles and projects are committed together with the task edit, only after
+confirmation. Blank titles, incompatible roles, closed projects as new
+assignments, and edits to completed/cancelled tasks are rejected. An unchanged
+form reports that there is nothing to save.
+
+Changing category requires an explicit compatible role or None. An existing
+retired role can be kept when its category is unchanged, but cannot be newly
+assigned. If another command changes the task while the form is open, discard
+the draft and select the task again. Existing archived accomplishments and
+correction history are never rewritten by task editing.
+
+For a recurring task, these edits affect **this occurrence only**. Future
+occurrences retain the series title, category, role, and project. The schedule
+is unchanged; use Reschedule to change this occurrence's deadline. Editing
+the recurring series itself remains separate future work.
 
 Use `list` to find a task id and `projects` to find a project id. `cancel`
 retains the task with status `cancelled` and records no accomplishment.

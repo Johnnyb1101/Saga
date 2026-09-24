@@ -191,9 +191,9 @@ def display(value):
     return line(value)
 
 
-def form(title, questions, save):
+def form(title, questions, save, initial=None):
     """questions: (key, label, ask callable); no database writes until Save."""
-    draft = {}
+    draft = dict(initial or {})
     index = 0
     editing = False
     print(f"\n{title}\nAnswer every question. :back revisits a question; :discard discards the draft.")
@@ -218,10 +218,19 @@ def form(title, questions, save):
                 else:
                     print("This is the first question. Use :discard to discard the draft.")
             continue
+        missing = next((i for i, (key, _, _) in enumerate(questions) if key not in draft), None)
+        if missing is not None:
+            index = missing
+            continue
         print(f"\nREVIEW BEFORE SAVING — {title}")
         for key, label, _ in questions:
             value = "Today (time of save)" if key == "completed_at" and draft[key] is None else display(draft[key])
-            print(f"  {label}: {value}")
+            if initial is not None:
+                before = display(initial[key])
+                print(f"  {label}: {before} -> {value}" if draft[key] != initial[key]
+                      else f"  {label}: {value} (unchanged)")
+            else:
+                print(f"  {label}: {value}")
         try:
             decision = choose("Next", [("Save", "save"), ("Edit answers", "edit"), ("Discard draft", "cancel")])
             if decision == "cancel":
@@ -394,11 +403,54 @@ def task_picker(con):
             print("Choose a listed row number or command.")
 
 
+def edit_task(con, path, task):
+    projects = {r['id']: r['name'] for r in reads.projects(con)}
+    initial = {"title": task['title'], "category": task['category'],
+               "duty": Reference(task['duty'], task['duty'] or 'None / not applicable'),
+               "project": Reference(task['project_id'], projects.get(task['project_id'], 'None / not applicable'))}
+    selected_category = {"name": task['category']}
+
+    def keep_or_change(label, current, prompt):
+        keep = choose(label, [(f"Keep saved value: {display(current)}", True), ("Change", False)])
+        return current if keep else prompt()
+
+    def select_category():
+        selected_category['name'] = keep_or_change("Category", task['category'], lambda: category(con))
+        return selected_category['name']
+
+    def select_role():
+        prompt = lambda: reference(con, "duty", selected_category['name'])
+        if selected_category['name'] != task['category']:
+            return prompt()
+        return keep_or_change("Role or responsibility", initial['duty'], prompt)
+
+    questions = [
+        ("title", "Task title", lambda: keep_or_change("Title", task['title'], lambda: answer("New task title"))),
+        ("category", "Category", select_category),
+        ("duty", "Role or responsibility", select_role),
+        ("project", "Project", lambda: keep_or_change("Project", initial['project'], lambda: reference(con, "project"))),
+    ]
+
+    def save(draft):
+        values, new = refs(draft)
+        values.update(task_id=task['id'], title=draft['title'], category=draft['category'])
+        writes.save_guided(con, "edit", values, expected_task=task, **new)
+        saved(con, path, f"Updated {line(draft['title'])} (task ID {task['id']}).")
+
+    if task['recurrence_id'] is not None:
+        print("This edit changes only this occurrence. Future occurrences keep the series settings.")
+    form(f"Edit task: {line(task['title'])}", questions, save, initial=initial)
+
+
 def task_action(con, path, task, action=None):
     print(f"\n{line(task['title'])} — {task['category']} — due {task['due_date'] or 'none'} (ID {task['id']})")
     if action is None:
         action = choose("Task action", [("Complete", "done"), ("Reschedule", "reschedule"),
-                                        ("View details", "details"), ("Cancel task", "cancel")], cancel_label="Return")
+                                        ("View details", "details"), ("Cancel task", "cancel"),
+                                        ("Edit task", "edit")], cancel_label="Return")
+    if action == "edit":
+        edit_task(con, path, task)
+        return
     if action == "details":
         projects = {r["id"]: r["name"] for r in reads.projects(con)}
         for label, value in (("Title", task["title"]), ("Category", task["category"]),
