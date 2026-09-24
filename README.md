@@ -84,7 +84,7 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Daily, weekly, and monthly recurrence
 - [x] Morning brief script (scheduler setup is machine-specific)
 
-Remaining work includes broader input-quality checks. A future interface
+Remaining work includes consistent connection cleanup and export-destination configuration. A future interface
 will use the same core functions; its form will follow actual capture needs.
 
 ## Requirements
@@ -161,6 +161,7 @@ python main.py project "name" [--deadline DATE]
 python main.py measure ["NAME"]         # list measures, or register one
 python main.py duty ["NAME"]            # list duties, or register one
 python main.py review [--since DATE] [--until DATE] [--duty NAME]
+python main.py review --check-evidence [--since DATE] [--until DATE] [--duty NAME]
 python main.py completions [--since DATE] [--until DATE] [--duty NAME]
 python main.py history ID               # all revisions of a completion
 python main.py correct ID --reason "..." --outcome "..."
@@ -198,6 +199,47 @@ An explicit date is stored at midnight local time; omitted dates use the
 current timestamp. Invalid or future completion dates are rejected. For
 `done`, supplying only an id and date still prompts for accomplishment details.
 Backdating records when work happened; it does not edit an existing completion.
+
+Measurements must be finite numbers: `log`, `done`, and `correct` reject
+`NaN`, infinity, and numeric inputs that overflow to infinity. The shared
+write functions enforce this too. Zero, negative values, and fractions remain
+valid; choose values appropriate to the measure. Guided entry asks again
+after an invalid number. Rejected quantities do not create a completion,
+close a task, advance recurrence, or append a correction.
+
+### Checking review evidence
+
+```powershell
+python main.py review --check-evidence --since 2026-01-01
+python main.py review --check-evidence --duty "Operations"
+```
+
+This mode lists current completion ids with missing outcomes, duties, or
+measurements, plus any non-finite quantities already in the archive. It
+examines entries whose saved context counts toward review or which are
+flagged, applying the same inclusive date and duty filters as review.
+Superseded revisions are excluded before filtering. A duty filter excludes
+entries without that duty, including unassigned entries; omit it to find
+missing duties across the archive.
+
+Missing fields are prompts to consider, not errors: some accomplishments
+have no useful numeric measure or duty. The check does not judge the quality
+of prose, require extra fields, or change records. It replaces the usual
+totals output and succeeds even when gaps are found. Use `correct ID --reason
+"..."` with the appropriate fields to append evidence while retaining originals.
+
+Evidence checking skips export refresh so legacy invalid numbers cannot
+block inspection. Corrections also skip the pre-command refresh, then
+refresh exports after saving. Correct an invalid quantity to a finite value
+or use `--clear-measure`; a correction cannot carry a non-finite value into
+its new revision. If other invalid entries still block export, the error
+states that the database change was saved; continue with the remaining
+entries, then run `export`. Do not repeat an already saved correction.
+
+These guards apply through Saga's write functions; direct SQL can bypass
+them. Export validation remains a final check, including for aggregate
+overflow from very large finite measurements. No existing evidence is
+automatically rewritten.
 
 ## Task and project maintenance
 
@@ -413,7 +455,8 @@ it does not consume the JSON files.
 Most commands against the default database refresh exports before running
 when the manifest is missing or outdated, files are missing or damaged,
 hashes disagree, or JSON metadata has an unexpected type or version.
-`init`, `migrate`, `backup`, `export`, and help do not run that freshness check;
+`init`, `migrate`, `backup`, `export`, `correct`, `review --check-evidence`,
+and help do not run that freshness check;
 `export` explicitly writes the files itself. Task/completion changes refresh
 exports afterward, but registering a measure or duty does not. Commands
 using an alternate database do not automatically refresh exports.
