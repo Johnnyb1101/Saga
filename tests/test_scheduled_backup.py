@@ -104,7 +104,7 @@ class ScheduledBackupTests(unittest.TestCase):
     def test_old_schema_reports_version_and_releases_restore_file(self):
         with contextlib.closing(sqlite3.connect(self.source)) as con:
             con.execute("PRAGMA user_version=1")
-        with self.assertRaisesRegex(ValueError, "Backup schema is 1; expected 4"):
+        with self.assertRaisesRegex(ValueError, f"Backup schema is 1; expected {db.SCHEMA_VERSION}"):
             scheduled.run(self.source, self.output)
         self.assertEqual(list(self.output.rglob("*.db")), [])
 

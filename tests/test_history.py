@@ -86,7 +86,7 @@ class HistoryTests(unittest.TestCase):
         duties = {r["name"]: r["completions"] for r in reads.duty_usage(self.con)}
         self.assertEqual(duties, {"Operations": 0, "Training": 1})
         review = export.build_review(self.con)
-        self.assertEqual(review["schema_version"], 2)
+        self.assertEqual(review["schema_version"], 3)
         self.assertEqual([r["id"] for r in review["flagged"]], [third])
         self.assertEqual([r["id"] for r in reads.completion_list(self.con)], [third])
         self.assertEqual(reads.get_task(self.con, self.task)["status"], "done")

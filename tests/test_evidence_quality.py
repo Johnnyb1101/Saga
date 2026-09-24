@@ -92,7 +92,7 @@ class EvidenceQualityTests(unittest.TestCase):
         before = list(self.con.iterdump())
         rows = {row["id"]: row for row in analytics.evidence_gaps(self.con)}
         self.assertEqual(set(rows), {missing, flagged})
-        self.assertEqual(rows[missing]["reasons"], ["missing outcome", "missing duty", "missing measurement"])
+        self.assertEqual(rows[missing]["reasons"], ["missing outcome", "missing duty", "measurement unspecified"])
         self.assertEqual(rows[flagged]["reasons"], ["missing duty"])
         self.assertEqual(list(self.con.iterdump()), before)
 
@@ -105,7 +105,7 @@ class EvidenceQualityTests(unittest.TestCase):
         self.assertEqual(analytics.evidence_gaps(self.con, duty="Operations"), [])
         rows = analytics.evidence_gaps(self.con, "2020-03-01", "2020-03-01", "Other")
         self.assertEqual([row["id"] for row in rows], [revision])
-        self.assertEqual(rows[0]["reasons"], ["missing measurement"])
+        self.assertEqual(rows[0]["reasons"], ["measurement unspecified"])
 
     def legacy_infinity(self):
         with self.con:

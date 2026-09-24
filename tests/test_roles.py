@@ -150,7 +150,8 @@ class RoleMigrationTests(unittest.TestCase):
             db.migrate(path)
             with contextlib.closing(db.connect(path)) as con:
                 for table, rows in before.items():
-                    self.assertEqual([tuple(r) for r in con.execute(f'SELECT * FROM {table}')], rows)
+                    self.assertEqual([tuple(r)[:-1] if table == 'completions' else tuple(r)
+                                      for r in con.execute(f'SELECT * FROM {table}')], rows)
                 work = reads.duties(con, 'work', True)
                 self.assertEqual([r['status'] for r in work], ['needs_review', 'needs_review'])
                 self.assertEqual(reads.duties(con, 'school')[0]['name'], 'Training')
@@ -193,7 +194,7 @@ class RoleMigrationTests(unittest.TestCase):
                     self.assertEqual(list(con.iterdump()), before)
                 script.write_text(original, encoding='utf-8')
                 db.migrate(path)
-            with contextlib.closing(db.connect(path)) as con:
+            with contextlib.closing(sqlite3.connect(path)) as con:
                 self.assertEqual(db.schema_version(con), 4)
             self.assertEqual(len(list(root.glob('*.bak'))), 2)
 

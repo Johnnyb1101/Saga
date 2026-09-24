@@ -10,8 +10,8 @@ from pathlib import Path
 
 from saga import analytics, db, reads
 
-SCHEMA_VERSION = 1
-REVIEW_SCHEMA_VERSION = 2
+SCHEMA_VERSION = 2
+REVIEW_SCHEMA_VERSION = 3
 EXPORT_DIR = db.ROOT / "exports"
 SOON_DAYS = 14
 DEADLINE_DAYS = 30
@@ -42,6 +42,7 @@ def build_brief(con, soon_days=SOON_DAYS, deadline_days=DEADLINE_DAYS):
         "due_today": as_dicts(reads.due_today(con)),
         "due_soon": as_dicts(reads.due_soon(con, days=soon_days)),
         "upcoming": as_dicts(reads.upcoming_deadlines(con, days=deadline_days)),
+        "measurement_followups": as_dicts(reads.measurement_followups(con, due_only=True)),
     }
 
 
@@ -57,12 +58,20 @@ def build_review(con, since=None, until=None):
         "by_category": as_dicts(analytics.completions_by_category(con, since, until)),
         "on_time": as_dicts(analytics.on_time_rate(con, since, until)),
         "flagged": as_dicts(analytics.flagged_work(con, since, until)),
+        "measurement_states": analytics.measurement_states(con, since, until),
     }
 
 
 def brief_markdown(brief):
     """Render the brief as plain Markdown, for reading on a phone."""
     lines = [f"# Brief - {brief['date']}", ""]
+
+    if brief['measurement_followups']:
+        lines.append("## Measurement follow-ups due")
+        for row in brief['measurement_followups']:
+            lines.append(f"- {row['outcome'] or row['task_title'] or '(no outcome)'} "
+                         f"(reminder {row['remind_on']}; work completed {row['completed_at'][:10]})")
+        lines.append("")
 
     if brief["overdue"]:
         lines.append("## Overdue")
@@ -92,7 +101,7 @@ def brief_markdown(brief):
         lines.append("")
 
     if not (brief["overdue"] or brief["due_today"]
-            or brief["due_soon"] or brief["upcoming"]):
+            or brief["due_soon"] or brief["upcoming"] or brief["measurement_followups"]):
         lines.append("Nothing due and no deadlines ahead.")
         lines.append("")
 

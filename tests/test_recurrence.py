@@ -220,7 +220,7 @@ class RecurrenceMigrationTests(unittest.TestCase):
             fresh = root / "fresh.db"
             db.init_db(fresh)
             with contextlib.closing(db.connect(path)) as con, contextlib.closing(db.connect(fresh)) as other:
-                self.assertEqual([tuple(r) for r in con.execute("SELECT * FROM completions")], completion_before)
+                self.assertEqual([tuple(r)[:-1] for r in con.execute("SELECT * FROM completions")], completion_before)
                 self.assertEqual([tuple(r)[:-2] for r in con.execute("SELECT * FROM tasks")], task_before)
                 task = reads.open_tasks(con)[0]
                 self.assertIsNone(task["recurrence_id"])

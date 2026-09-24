@@ -13,6 +13,17 @@ def get_task(con, task_id):
     ).fetchone()
 
 
+def measurement_followups(con, due_only=False, on=None):
+    """Open evidence reminders, separate from task deadlines and completion counts."""
+    return con.execute(
+        """SELECT f.id, f.completion_id, f.remind_on, c.completed_at, c.outcome,
+                  c.task_title, c.category, c.duty, c.due_date, c.measurement_status
+           FROM measurement_followups f JOIN current_completions c ON c.id=f.completion_id
+           WHERE f.status='open' AND (?=0 OR f.remind_on <= COALESCE(?, date('now','localtime')))
+           ORDER BY f.remind_on, f.id""", (int(due_only), on),
+    ).fetchall()
+
+
 def completion_list(con, since=None, until=None, duty=None):
     """Latest revisions only, with ids for inspection and correction."""
     return con.execute(
