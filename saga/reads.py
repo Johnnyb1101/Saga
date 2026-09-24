@@ -54,6 +54,22 @@ def open_tasks(con, category=None):
         (category, category),
     ).fetchall()
 
+def selectable_tasks(con, search="", category=None, due_only=False, on=None):
+    """Open tasks with readable project context, in deadline order."""
+    rows = con.execute(
+        """SELECT t.*, p.name AS project_name FROM tasks t
+           LEFT JOIN projects p ON p.id=t.project_id
+           WHERE t.status='open' AND (? IS NULL OR t.category=?)
+             AND (?=0 OR t.due_date <= COALESCE(?, date('now', 'localtime')))
+           ORDER BY t.due_date IS NULL, t.due_date, t.id""",
+        (category, category, int(due_only), on),
+    ).fetchall()
+    needle = search.casefold()
+    return [row for row in rows if needle in " ".join(
+        str(row[key] or "") for key in ("title", "category", "duty", "project_name")
+    ).casefold()]
+
+
 def projects(con):
     """Every project, including undated and closed projects, with task counts."""
     return con.execute(

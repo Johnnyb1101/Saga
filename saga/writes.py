@@ -162,7 +162,7 @@ def add_completion(con, category, outcome=None, measure=None, quantity=None,
     return cur.lastrowid
 
 def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
-                  flagged=False, completed_at=None, duty=None):
+                  flagged=False, completed_at=None, duty=None, inherit_duty=True):
     """Archive a completion and close the task. Returns the completion id."""
     task = con.execute(
         "SELECT status, category, duty, recurrence_id, occurrence_index FROM tasks WHERE id = ?", (task_id,)
@@ -176,7 +176,7 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
     with con:
         cur = _insert_completion(con, task_id, task["category"], outcome,
                                  measure, quantity, flagged, completed_at,
-                                 task["duty"] if duty is None else duty)
+                                 task["duty"] if duty is None and inherit_duty else duty)
         changed = con.execute("UPDATE tasks SET status = 'done' WHERE id = ? AND status='open'", (task_id,))
         if changed.rowcount != 1:
             raise ValueError(f"Task {task_id} is no longer open.")
@@ -188,6 +188,41 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
                 _insert_task(con, series["title"], series["category"], series["project_id"], due,
                              series["duty"], series["id"], next_index)
     return cur.lastrowid
+
+
+def save_guided(con, action, values, *, new_duty=None, new_measure=None,
+                new_project=None, expected_task=None):
+    """Save a confirmed form and its new references as one transaction.
+
+    Owns a fresh connection transaction; never call while another write is pending.
+    The existing action functions commit only after references and action succeed.
+    """
+    actions = {"add": add_task, "log": add_completion, "done": complete_task,
+               "reschedule": reschedule_task, "cancel": cancel_task}
+    if action not in actions:
+        raise ValueError("Unsupported guided action")
+    if con.in_transaction:
+        raise ValueError("Finish the current transaction before saving a guided form")
+    values = dict(values)
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        if expected_task is not None:
+            current = con.execute("SELECT * FROM tasks WHERE id=?", (expected_task["id"],)).fetchone()
+            if current is None or dict(current) != expected_task:
+                raise ValueError("This task changed while you were answering. Cancel and select it again.")
+            if values.get("task_id") != expected_task["id"]:
+                raise ValueError("Selected task does not match the action")
+        if new_duty is not None:
+            con.execute("INSERT INTO duties(name) VALUES (?)", (new_duty,))
+            values["duty"] = new_duty
+        if new_measure is not None:
+            con.execute("INSERT INTO measures(name) VALUES (?)", (new_measure,))
+            values["measure"] = new_measure
+        if new_project is not None:
+            values["project_id"] = con.execute(
+                "INSERT INTO projects(name) VALUES (?)", (new_project,)
+            ).lastrowid
+        return actions[action](con, **values)
 
 
 CORRECTION_FIELDS = (

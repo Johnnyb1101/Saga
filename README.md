@@ -84,8 +84,10 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Daily, weekly, and monthly recurrence
 - [x] Morning brief script (scheduler setup is machine-specific)
 
-Remaining work includes consistent connection cleanup and export-destination configuration. A future interface
-will use the same core functions; its form will follow actual capture needs.
+The guided terminal interface covers daily capture and task selection.
+Remaining work includes task-field editing, distinct unknown/not-applicable
+evidence states, consistent connection cleanup, and export-destination configuration.
+A future graphical interface will use the same core functions.
 
 ## Requirements
 
@@ -136,8 +138,69 @@ use `--out DIR` to avoid overwriting the default exports.
 
 ## Usage
 
+### Guided daily workflow
+
+Launch Saga from a terminal without a command:
+
+```powershell
+.\.venv\Scripts\python.exe main.py
 ```
-python main.py                          # list every command
+
+The menu stays open until you exit. It offers task browsing, adding and
+completing tasks, recording standalone accomplishments, rescheduling, and
+cancelling tasks. A missing database offers an explicit create-or-cancel
+choice; an old database still requires the separate migration command.
+
+Select tasks by their numbered **rows**, not by typing database ids. Lists
+show title, category, duty, project, and deadline. Search matches title,
+category, duty, and project text; category and due-today/overdue filters and
+eight-row pages keep longer lists manageable. Database ids remain visible
+to distinguish otherwise identical tasks and for direct-command shortcuts.
+
+Every form requires an explicit answer. Select a category, choose existing
+or new duties/projects/measures where offered, or deliberately choose
+`None / not applicable`. Blank answers do not silently choose defaults.
+Numbers must be finite; zero is a real measurement. Review relevance requires
+an explicit Yes or No. Completion requires an outcome in this guided interface.
+Completing a task asks you to confirm its existing category/project context
+and choose whether to retain its duty. Choosing no duty applies only to this
+completion; it does not erase the task's duty.
+
+Before saving, review the summary and choose **Save**, **Edit answers**, or
+**Discard draft**. `Back` or `:back` revisits a question while retaining draft
+answers; `:discard` explicitly discards the form. At the first question,
+Back keeps you there rather than silently discarding the draft. Zero follows
+the displayed navigation label and remains a real answer in a quantity prompt.
+The main menu has one `Exit` option. `Return` on Task action takes you back
+to the task list; `Return` in the edit-answer picker keeps the completed preview.
+The guided interface calls a duty a **Role or responsibility**: an ongoing
+responsibility such as training or maintenance. **Category** means the area
+of life, while **Project** means a specific effort with an end goal. Database
+field names and direct command flags such as `--duty` are unchanged.
+New reference names stay in memory with the draft: cancelling saves neither
+the task/accomplishment nor its proposed duties, measures, or project. On
+confirmation they are saved in the same transaction. A task changed elsewhere
+while the form was open must be selected again before saving.
+
+Successful actions return to the main menu. Export failures explicitly report
+that the database change was saved; retry export without repeating the action.
+The guided menu does not refresh exports before inspection. EOF or Ctrl+C
+exits and discards unconfirmed answers. Existing direct commands and their
+prompt behavior remain available; scripts without a terminal still receive
+help rather than entering the menu.
+
+This first menu does not edit saved task titles/categories/projects, close
+projects, stop series independently, or guide review/corrections; use the
+existing direct commands where supported. Adding a project within a task form
+records its name only. Standalone accomplishments do not acquire a project
+through this menu. `None / not applicable` is one stored empty state: distinct
+unknown/not-applicable answers require a later data-model change.
+
+### Direct commands
+
+```
+python main.py                          # guided menu in a terminal
+python main.py --help                   # list every command
 python main.py <command> --help         # details for one
 
 python main.py init                     # create the database (first run only)
