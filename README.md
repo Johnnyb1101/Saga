@@ -84,9 +84,9 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Daily, weekly, and monthly recurrence
 - [x] Morning brief script (scheduler setup is machine-specific)
 
-The guided terminal interface covers daily capture and task selection.
-Remaining work includes distinct unknown/not-applicable
-evidence states, consistent connection cleanup, and export-destination configuration.
+The guided terminal interface covers daily capture, task selection, measurement
+follow-ups, and review browsing. Remaining work includes general guided
+corrections, consistent connection cleanup, and export-destination configuration.
 A future graphical interface will use the same core functions.
 
 ## Requirements
@@ -190,7 +190,7 @@ prompt behavior remain available; scripts without a terminal still receive
 help rather than entering the menu.
 
 This menu does not close projects, stop series independently, or guide
-review/corrections; use the
+general archive corrections; use the
 existing direct commands where supported. Adding a project within a task form
 records its name only. Standalone accomplishments do not acquire a project
 through this menu. `None / not applicable` is one stored empty state: distinct
@@ -225,9 +225,9 @@ python main.py measure ["NAME"]         # list measures, or register one
 python main.py duty ["NAME" --category NAME] # list roles, or register in a category
 python main.py retire-role "NAME" --category NAME
 python main.py activate-role "NAME" --category NAME
-python main.py review [--since DATE] [--until DATE] [--duty NAME]
-python main.py review --check-evidence [--since DATE] [--until DATE] [--duty NAME]
-python main.py completions [--since DATE] [--until DATE] [--duty NAME]
+python main.py review [--since DATE] [--until DATE] [--category NAME] [--duty NAME | --unassigned]
+python main.py review --check-evidence [--since DATE] [--until DATE] [--category NAME] [--duty NAME | --unassigned]
+python main.py completions [--since DATE] [--until DATE] [--category NAME] [--duty NAME | --unassigned]
 python main.py history ID               # all revisions of a completion
 python main.py correct ID --reason "..." --outcome "..."
 python main.py export [--out DIR]       # regenerate exports/
@@ -323,6 +323,52 @@ omitting both without a status remains Unspecified for compatibility.
 Run `python main.py migrate` and then `python main.py export` to upgrade an
 existing database before using these features or its scheduled backup runner.
 
+### Reviewing accomplishments
+
+Choose **Review accomplishments** in the guided menu, then explicitly select
+all recorded dates or an inclusive date range, a category or all categories,
+and a historical role, all roles, or **No role assigned**. Role choices come
+from current completion records in the selected period/category, so retired
+roles remain available. Back revisits the previous selector.
+
+The review menu offers the summary, searchable eight-row accomplishment pages,
+evidence gaps, and filter changes. Select a row to inspect its saved context,
+measurement state, actual completion date, and entry time, or view every
+revision in its history. Returning from details retains the review filters.
+Review inspection does not change records or refresh exports. Use existing
+direct `correct` commands or Measurement follow-ups to update evidence;
+general guided correction forms remain future work.
+
+Direct commands accept the same filters:
+
+```powershell
+python main.py review --since 2026-01-01 --until 2026-12-31 --category work --duty "Training"
+python main.py completions --category work --unassigned
+python main.py review --check-evidence --category work
+```
+
+Dates must be valid `YYYY-MM-DD` values; the start cannot follow the end.
+Omitted boundaries impose no date limit. `--duty` alone continues to span
+categories; combine it with `--category` to narrow a same-named role.
+`--unassigned` selects records whose role is empty and cannot be combined
+with `--duty`.
+
+**By category / role** groups each current accomplishment once using its
+saved category and role. Same-named roles in different categories are separate;
+retired roles and No role assigned remain visible. These groups partition the
+headline totals, rather than adding more accomplishments to category totals.
+Groups with no matching completions are omitted; the category summary still
+includes zero-count categories within the selected scope.
+
+Each group includes completion and flagged counts, all four measurement
+states, totals per measurement unit, and the on-time numerator and denominator.
+Only records with a saved deadline enter that denominator. Explicit Not
+applicable remains valid narrative evidence, and resolving a follow-up or
+appending a correction never adds a second accomplishment. Superseded revisions
+are excluded before filters and grouping. Overall totals continue to include
+all selected completions; evidence checks inspect review-counting or flagged
+entries only.
+
 ### Checking review evidence
 
 ```powershell
@@ -335,7 +381,7 @@ unspecified measurements, pending measurement follow-ups, and any non-finite
 quantities already in the archive. Explicit Not applicable is not a
 measurement gap. It
 examines entries whose saved context counts toward review or which are
-flagged, applying the same inclusive date and duty filters as review.
+flagged, applying the same inclusive date, category, and role filters as review.
 Superseded revisions are excluded before filtering. A duty filter excludes
 entries without that duty, including unassigned entries; omit it to find
 missing duties across the archive.
@@ -401,9 +447,9 @@ be created, or can be stopped first. Historical queries still find every name.
 The new category checks apply through shared write functions, including direct
 commands; direct SQL bypasses application validation. Historical review filters
 such as `--duty "Training"` still span categories and include retired roles.
-Category/role report breakdowns are subsequent work.
-No export format change is needed: each accomplishment already includes its
-category and duty. Run `migrate` and then `export` before using upgraded code;
+Category/role report breakdowns use that saved context. Role registration
+itself needs no export format change; the review aggregates use format 4.
+Run `migrate` and then `export` before using upgraded code;
 the installed backup runner also requires the current database version.
 
 ## Task and project maintenance
@@ -531,9 +577,16 @@ New records are marked `captured`, including backdated work entered today.
 `recorded_at` is the entry time; `completed_at` is when the work happened.
 
 After migrating, run `python main.py export` to regenerate existing exports.
-Review JSON format 3 includes measurement-state counts and status on flagged
-items, alongside snapshot provenance and predecessor ids. Totals count current
-revisions only. Brief JSON format 2 includes due measurement follow-ups.
+Review JSON format 4 adds `by_category_role` to the existing report fields.
+Each group has `category`, nullable `duty`, `completions`, `review_counting`,
+`flagged`, `with_a_number`, `measurement_states`, `evaluated`, `on_time`, `pct`,
+and `measures` (separate unit totals and occasion counts). `pct` is null when
+no deadlines can be evaluated. Existing fields retain their meaning, including
+measurement-state counts, flagged-item status, snapshot provenance, and
+predecessor ids. Totals count current revisions only. Brief JSON remains
+format 2, and the database remains schema 5; this report change requires no
+migration. Regenerate exports with `python main.py export` when ready to
+publish format 4, and update consumers that enforce the review format version.
 
 ## Backup and recovery
 
@@ -632,7 +685,7 @@ missed-run behavior there. The repository alone does not establish whether
 a scheduled task exists or has run successfully on a particular machine.
 
 External consumers can read `brief.json` (format version 2), `brief.md`, and
-`review.json` (format version 3), with `manifest.json` (format version 1)
+`review.json` (format version 4), with `manifest.json` (format version 1)
 describing the published set. These formats are separate from database
 schema version 5. The bundled morning script calls the core through the CLI;
 it does not consume the JSON files.

@@ -246,7 +246,8 @@ def cmd_completions(args):
     with closing(db.connect(args.db)) as con:
         if args.duty is not None:
             require_duty(con, args.duty)
-        rows = reads.completion_list(con, args.since, args.until, args.duty)
+        show_review_scope(args.since, args.until, args.duty, args.category, args.unassigned)
+        rows = reads.completion_list(con, args.since, args.until, args.duty, args.category, args.unassigned)
         if not rows:
             print("No completions in this period.")
         for row in rows:
@@ -342,40 +343,43 @@ def quantity_argument(raw):
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
-def cmd_review(args):
-    if args.check_evidence:
-        with closing(db.connect(args.db)) as con:
-            if args.duty is not None:
-                require_duty(con, args.duty)
-            gaps = analytics.evidence_gaps(con, args.since, args.until, args.duty)
-        print(f"EVIDENCE CHECK  {args.since or 'the beginning'} to {args.until or 'today'}")
-        if args.duty:
-            print(f"DUTY           {args.duty}")
-        print("Review-counting or flagged entries; missing fields are prompts, not requirements.")
-        if not gaps:
-            print("No evidence gaps found in the selected current entries.")
-        for row in gaps:
-            title = (row['outcome'] or '').strip() or row['task_title'] or '(no outcome)'
-            print(f"  {row['id']:>4}  {row['completed_at'][:10]}  {title}")
-            print(f"        {'; '.join(row['reasons'])}")
-        if gaps:
-            print("Use correct ID --reason ... to append evidence; history retains originals.")
-        return
-    con = db.connect(args.db)
-    since, until, duty = args.since, args.until, args.duty
-    if duty is not None:
-        require_duty(con, duty)
+def show_review_scope(since=None, until=None, duty=None, category=None, unassigned=False):
+    print(f"REVIEW PERIOD  {since or 'the beginning'} to {until or 'no end limit'}")
+    print(f"CATEGORY       {category or 'All categories'}")
+    print(f"ROLE           {'No role assigned' if unassigned else duty or 'All roles'}")
 
-    print(f"REVIEW PERIOD  {since or 'the beginning'} to {until or 'today'}")
-    if duty:
-        print(f"DUTY           {duty}")
+
+def show_evidence(con, since=None, until=None, duty=None, category=None, unassigned=False):
+    show_review_scope(since, until, duty, category, unassigned)
+    gaps = analytics.evidence_gaps(con, since, until, duty, category, unassigned)
+    print("EVIDENCE CHECK — review-counting or flagged entries; missing fields are prompts, not requirements.")
+    if not gaps:
+        print("No evidence gaps found in the selected current entries.")
+    for row in gaps:
+        title = (row['outcome'] or '').strip() or row['task_title'] or '(no outcome)'
+        print(f"  {row['id']:>4}  {row['completed_at'][:10]}  {title}")
+        print(f"        {'; '.join(row['reasons'])}")
+    if gaps:
+        print("Use correct ID --reason ... to append evidence; history retains originals.")
+    return gaps
+
+
+def cmd_review(args):
+    with closing(db.connect(args.db)) as con:
+        render = show_evidence if args.check_evidence else show_review
+        render(con, args.since, args.until, args.duty, args.category, args.unassigned)
+
+
+def show_review(con, since=None, until=None, duty=None, category=None, unassigned=False):
+    reads.validate_review_scope(con, since, until, duty, category, unassigned)
+    show_review_scope(since, until, duty, category, unassigned)
     print()
 
     print("MEASUREMENT STATUS (narrative evidence remains valid without a number)")
-    for status, count in analytics.measurement_states(con, since, until, duty).items():
+    for status, count in analytics.measurement_states(con, since, until, duty, category, unassigned).items():
         print(f"  {status.replace('_', ' ')}: {count}")
     print()
-    counts = analytics.volume(con, since, until, duty)
+    counts = analytics.volume(con, since, until, duty, category, unassigned)
     print("VOLUME")
     print(f"  {counts['completions']:>7,} completions")
     print(f"  {counts['review_counting']:>7,} in review-counting categories")
@@ -383,7 +387,7 @@ def cmd_review(args):
     print(f"  {counts['with_a_number']:>7,} recorded a number")
     print()
 
-    measures = analytics.measure_totals(con, since, until, duty)
+    measures = analytics.measure_totals(con, since, until, duty, category, unassigned)
     if measures:
         print("MEASURES")
         for row in measures:
@@ -393,15 +397,28 @@ def cmd_review(args):
         print()
 
     rates = {row["category"]: row["pct"]
-             for row in analytics.on_time_rate(con, since, until, duty)}
+             for row in analytics.on_time_rate(con, since, until, duty, category, unassigned)}
     print("BY CATEGORY")
-    for row in analytics.completions_by_category(con, since, until, duty):
+    for row in analytics.completions_by_category(con, since, until, duty, category, unassigned):
         pct = rates.get(row["category"])
         rate = f"{pct:>5}% on time" if pct is not None else "        -"
         print(f"  {row['category']:<10}{row['completions']:>5,} completions   {rate}")
     print()
 
-    flagged = analytics.flagged_work(con, since, until, duty)
+    print("BY CATEGORY / ROLE (the same completions grouped once; do not add to category totals)")
+    for row in analytics.category_role_breakdown(con, since, until, duty, category, unassigned):
+        rate = (f"{row['on_time']}/{row['evaluated']} on time ({row['pct']}%)"
+                if row['evaluated'] else "No saved deadlines to evaluate")
+        print(f"  {row['category']} / {row['duty'] or 'No role assigned'}: "
+              f"{row['completions']} completions; {row['flagged']} flagged; {rate}")
+        print("    " + "; ".join(f"{name.replace('_', ' ')}: {count}"
+                                  for name, count in row['measurement_states'].items()))
+        for measure in row['measures']:
+            print(f"    {measure['measure']}: {fmt_number(measure['total'])} "
+                  f"across {measure['occasions']} occasions")
+    print()
+
+    flagged = analytics.flagged_work(con, since, until, duty, category, unassigned)
     if not flagged:
         print("No flagged work in this period.")
         return
@@ -665,7 +682,10 @@ def build_parser():
     p = sub.add_parser("completions", help="list current accomplishments with ids")
     p.add_argument("--since", metavar="DATE")
     p.add_argument("--until", metavar="DATE")
-    p.add_argument("--duty", metavar="NAME")
+    roles = p.add_mutually_exclusive_group()
+    roles.add_argument("--duty", metavar="NAME")
+    roles.add_argument("--unassigned", action="store_true", help="only completions with no role assigned")
+    p.add_argument("-c", "--category", metavar="NAME", help="only this category")
     p.set_defaults(func=cmd_completions)
 
     p = sub.add_parser("history", help="show every revision of an accomplishment")
@@ -735,7 +755,10 @@ def build_parser():
                                    "per-category rates, and flagged accomplishments.")
     p.add_argument("--since", metavar="DATE", help="start of the period, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="end of the period, YYYY-MM-DD")
-    p.add_argument("--duty", metavar="NAME", help="only work filed under this duty")
+    roles = p.add_mutually_exclusive_group()
+    roles.add_argument("--duty", metavar="NAME", help="only work filed under this duty")
+    roles.add_argument("--unassigned", action="store_true", help="only completions with no role assigned")
+    p.add_argument("-c", "--category", metavar="NAME", help="only this category")
     p.add_argument("--check-evidence", action="store_true",
                    help="list missing evidence and invalid quantities instead of totals")
     p.set_defaults(func=cmd_review)
@@ -788,6 +811,10 @@ def main(argv=None):
         return 1
 
     try:
+        if args.command in ("review", "completions"):
+            with closing(db.connect(args.db)) as con:
+                reads.validate_review_scope(con, args.since, args.until, args.duty,
+                                            args.category, args.unassigned)
         if args.refresh and not (args.command == "review" and args.check_evidence):
             refresh_if_stale(args)
         args.func(args)

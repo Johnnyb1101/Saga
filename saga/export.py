@@ -11,7 +11,7 @@ from pathlib import Path
 from saga import analytics, db, reads
 
 SCHEMA_VERSION = 2
-REVIEW_SCHEMA_VERSION = 3
+REVIEW_SCHEMA_VERSION = 4
 EXPORT_DIR = db.ROOT / "exports"
 SOON_DAYS = 14
 DEADLINE_DAYS = 30
@@ -55,6 +55,7 @@ def build_review(con, since=None, until=None):
         "until": until,
         "volume": dict(analytics.volume(con, since, until)),
         "measures": as_dicts(analytics.measure_totals(con, since, until)),
+        "by_category_role": analytics.category_role_breakdown(con, since, until),
         "by_category": as_dicts(analytics.completions_by_category(con, since, until)),
         "on_time": as_dicts(analytics.on_time_rate(con, since, until)),
         "flagged": as_dicts(analytics.flagged_work(con, since, until)),

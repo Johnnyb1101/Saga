@@ -606,6 +606,116 @@ def manage_roles(con):
             print(f"Could not save role: {exc}")
 
 
+def review_period(con):
+    selected = choose("Review period", [("All recorded dates", "all"), ("Enter an inclusive date range", "range")])
+    if selected == "all":
+        return None, None
+    while True:
+        since = answer("Start date (YYYY-MM-DD)")
+        until = answer("End date (YYYY-MM-DD)")
+        try:
+            reads.validate_review_scope(con, since, until)
+            return since, until
+        except ValueError as exc:
+            print(exc)
+
+
+def review_scope(con):
+    """Explicit selectors with Back navigation; roles come from historical evidence."""
+    step = 0
+    since = until = selected_category = None
+    while True:
+        try:
+            if step == 0:
+                since, until = review_period(con)
+            elif step == 1:
+                selected_category = pick("Review category", [("All categories", None),
+                    *[(r['name'], r['name']) for r in reads.categories(con)]])
+            else:
+                rows = reads.completion_list(con, since, until, category=selected_category)
+                names = sorted({r['duty'] for r in rows if r['duty'] is not None})
+                duty, unassigned = pick("Historical role or responsibility", [
+                    ("All roles", (None, False)), ("No role assigned", (None, True)),
+                    *[(name, (name, False)) for name in names]])
+                return since, until, duty, selected_category, unassigned
+            step += 1
+        except Back:
+            if step == 0:
+                raise
+            step -= 1
+
+
+def show_completion(row, current=True):
+    print(f"\nCOMPLETION {row['id']} ({'current' if current else 'superseded'})")
+    for field in ('completed_at', 'recorded_at', 'category', 'duty', 'outcome',
+                  'task_title', 'project_name', 'due_date', 'review_counting',
+                  'flagged', 'measurement_status', 'measure', 'quantity',
+                  'snapshot_source', 'supersedes_id', 'correction_reason'):
+        label = 'Role or responsibility' if field == 'duty' else field.replace('_', ' ').capitalize()
+        print(f"  {label}: {line(row[field]) if row[field] is not None else '-'}")
+
+
+def browse_completions(con, scope, gaps_only=False):
+    from saga import analytics
+
+    while True:
+        rows = reads.completion_list(con, *scope)
+        gaps = {r['id']: r['reasons'] for r in analytics.evidence_gaps(con, *scope)} if gaps_only else {}
+        if gaps_only:
+            rows = [r for r in rows if r['id'] in gaps]
+        if not rows:
+            print("No evidence gaps found in the selected current entries." if gaps_only
+                  else "No completions in this period.")
+            return
+        choices = []
+        for row in rows:
+            label = (f"{row['completed_at'][:10]} — {row['outcome'] or row['task_title'] or '(no outcome)'} "
+                     f"[{row['category']}; {row['duty'] or 'No role assigned'}; "
+                     f"{row['project_name'] or 'no project'}; ID {row['id']}]")
+            if gaps_only:
+                label += " — " + "; ".join(gaps[row['id']])
+            choices.append((label, row))
+        try:
+            row = pick("Review evidence" if gaps_only else "Accomplishments", choices)
+        except Back:
+            return
+        while True:
+            show_completion(row)
+            try:
+                choose("Accomplishment action", [("View revision history", "history")], cancel_label="Return")
+                history = reads.completion_history(con, row['id'])
+                for revision in history:
+                    show_completion(revision, revision['id'] == history[-1]['id'])
+            except (Back, Cancel):
+                break
+
+
+def review(con):
+    from saga.cli import show_review, show_review_scope
+
+    scope = review_scope(con)
+    while True:
+        show_review_scope(*scope)
+        try:
+            action = choose("Review", [("Summary and category / role breakdown", "summary"),
+                ("Browse accomplishments", "browse"), ("Inspect evidence gaps", "gaps"),
+                ("Change review filters", "filters")], cancel_label="Return")
+        except (Back, Cancel):
+            return
+        if action == "summary":
+            show_review(con, *scope)
+        elif action == "filters":
+            try:
+                scope = review_scope(con)
+            except (Back, Cancel):
+                pass
+        else:
+            if action == "gaps":
+                print("Review-counting or flagged entries; missing fields are prompts, not requirements.")
+                print("Use direct correct commands or Measurement follow-ups to update evidence.")
+            browse_completions(con, scope, gaps_only=action == "gaps")
+
+
 def run(path):
     if not sys.stdin.isatty():
         print("The guided menu requires a terminal.", file=sys.stderr)
@@ -623,7 +733,7 @@ def run(path):
                 try:
                     action = choose("Main menu", [("Browse tasks / today", "browse"), ("Add a task", "add"),
                         ("Complete a task", "done"), ("Record an accomplishment", "log"),
-                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups")],
+                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups"), ("Review accomplishments", "review")],
                         cancel_label="Exit")
                 except (Back, Cancel):
                     return 0
@@ -632,6 +742,8 @@ def run(path):
                         add_task(con, path)
                     elif action == "log":
                         capture(con, path)
+                    elif action == "review":
+                        review(con)
                     elif action == "followups":
                         manage_followups(con, path)
                     elif action == "roles":
