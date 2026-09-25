@@ -115,6 +115,31 @@ def close_project(con, project_id):
             raise ValueError(f"Project {project_id} is missing, already closed, or still has open tasks.")
 
 
+def save_guided_management(con, action, expected, expected_tasks):
+    """Recheck the project/series and open tasks shown before confirmation."""
+    from saga import reads
+
+    if action not in ('close_project', 'stop_recurrence'):
+        raise ValueError("Unsupported management action")
+    if con.in_transaction:
+        raise ValueError("Finish the current transaction before saving")
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        if action == 'close_project':
+            row = reads.project_details(con, expected['id'])
+            tasks = reads.project_open_tasks(con, expected['id'])
+        else:
+            row = reads.recurrence_details(con, expected['id'])
+            task = reads.open_occurrence(con, expected['id'])
+            tasks = [] if task is None else [task]
+        if row is None or dict(row) != expected or [dict(task) for task in tasks] != expected_tasks:
+            raise ValueError("This selection changed. Return to the list and select it again.")
+        if action == 'close_project':
+            close_project(con, expected['id'])
+        else:
+            stop_recurrence(con, expected['id'])
+
+
 def add_measure(con, name):
     """Register a measure so quantities can be recorded against it."""
     with con:

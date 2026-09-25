@@ -859,6 +859,133 @@ def review(con, path):
             browse_completions(con, scope, gaps_only=action == "gaps", path=path)
 
 
+def project_day(label):
+    selected = choose(label, [("No date", None), ("Today", 'today'), ("Enter a date", 'date')])
+    if selected is None:
+        return None
+    if selected == 'today':
+        return dt.date.today().isoformat()
+    while True:
+        value = answer(f"{label} (YYYY-MM-DD)")
+        try:
+            if dt.date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+        print("Enter a valid date in YYYY-MM-DD form.")
+
+
+def create_project(con, path):
+    def description():
+        include = choose("Description", [("Enter text", True), ("None", False)])
+        return answer("Project description") if include else None
+
+    def save(draft):
+        project_id = writes.add_project(con, **draft)
+        saved(con, path, f"Created project {project_id}: {line(draft['name'])}.")
+
+    form("Create project", [("name", "Project name", lambda: answer("Project name")),
+        ("description", "Description", description),
+        ("start_date", "Start date", lambda: project_day("Start date")),
+        ("deadline", "Deadline", lambda: project_day("Deadline"))], save)
+
+
+def manage_projects(con, path):
+    while True:
+        try:
+            action = choose("Manage projects", [("Browse projects", 'browse'), ("Create project", 'create')],
+                            cancel_label="Return")
+        except (Back, Cancel):
+            return
+        try:
+            if action == 'create':
+                create_project(con, path)
+                continue
+            while True:
+                rows = reads.projects(con)
+                if not rows:
+                    print("No projects. Choose Create project to add one.")
+                    break
+                selected = pick("Projects", [((f"{r['name']} [{r['status']}; deadline {r['deadline'] or 'none'}; "
+                                               f"{r['open_tasks']} open tasks; ID {r['id']}]"), r['id']) for r in rows])
+                row = reads.project_details(con, selected)
+                if row is None:
+                    print("Project changed; select it again.")
+                    continue
+                tasks = reads.project_open_tasks(con, selected)
+                print(f"\nPROJECT {row['id']}: {line(row['name'])}")
+                for field in ('status', 'description', 'start_date', 'deadline'):
+                    print(f"  {field.replace('_', ' ').capitalize()}: {display(row[field])}")
+                print(f"  {len(tasks)} open tasks")
+                try:
+                    action = choose("Project action", [("View open tasks", 'tasks'), ("Close project", 'close')],
+                                    cancel_label="Return")
+                    if action == 'tasks':
+                        if not tasks:
+                            print("No open tasks.")
+                        else:
+                            pick("Open project tasks (select to return)", [((f"{t['title']} [{t['category']}; "
+                                f"{t['duty'] or 'no role'}; due {t['due_date'] or 'none'}; ID {t['id']}]"), t['id'])
+                                for t in tasks])
+                    elif tasks:
+                        print("Cannot close this project while tasks remain open. Complete or cancel them first.")
+                    elif row['status'] not in ('active', 'on_hold'):
+                        print("This project is already closed.")
+                    else:
+                        choose(f"Close {line(row['name'])}? Status will become done; history is retained.",
+                               [("Close project", True)], cancel_label="Return")
+                        writes.save_guided_management(con, 'close_project', dict(row), [])
+                        saved(con, path, f"Closed project {row['id']}.")
+                except (Back, Cancel):
+                    continue
+                except (ValueError, sqlite3.Error, OSError) as exc:
+                    print(f"Could not finish project action: {exc}")
+        except (Back, Cancel):
+            continue
+
+
+def manage_series(con, path):
+    while True:
+        rows = reads.recurrences(con)
+        if not rows:
+            print("No recurring series. Create a repeating task through Add a task.")
+            return
+        projects = {r['id']: r['name'] for r in reads.projects(con)}
+        try:
+            selected = pick("Recurring series", [((f"{r['title']} [{r['status']}; {r['category']}; "
+                f"{r['duty'] or 'no role'}; {projects.get(r['project_id'], 'no project')}; "
+                f"every {r['interval']} {r['frequency']} interval(s); "
+                f"current task {r['task_id'] if r['task_id'] is not None else 'none'}; "
+                f"due {r['due_date'] or 'none'}; ID {r['id']}]"), r['id']) for r in rows])
+        except (Back, Cancel):
+            return
+        row = reads.recurrence_details(con, selected)
+        if row is None:
+            print("Series changed; select it again.")
+            continue
+        task = reads.open_occurrence(con, selected)
+        print(f"\nSERIES {row['id']}: {line(row['title'])} [{row['status']}]")
+        print(f"  Schedule: every {row['interval']} {row['frequency']} interval(s), anchored {row['anchor_date']}")
+        print(f"  Category: {row['category']}; role: {row['duty'] or 'none'}; "
+              f"project: {line(projects.get(row['project_id'], 'none'))}")
+        if task is None:
+            print("  No open occurrence.")
+        else:
+            print(f"  Current task {task['id']}: {line(task['title'])}; due {task['due_date'] or 'none'}")
+        if row['status'] == 'stopped':
+            print("This series is already stopped. Its remaining task can still be completed or cancelled.")
+            continue
+        try:
+            choose("Stop future occurrences? The current task stays open; completing it will not create a successor.",
+                   [("Stop future occurrences", True)], cancel_label="Return")
+            writes.save_guided_management(con, 'stop_recurrence', dict(row), [] if task is None else [dict(task)])
+            saved(con, path, f"Stopped series {row['id']}; current task retained.")
+        except (Back, Cancel):
+            continue
+        except (ValueError, sqlite3.Error, OSError) as exc:
+            print(f"Could not stop series: {exc}")
+
+
 def run(path):
     if not sys.stdin.isatty():
         print("The guided menu requires a terminal.", file=sys.stderr)
@@ -876,7 +1003,8 @@ def run(path):
                 try:
                     action = choose("Main menu", [("Browse tasks / today", "browse"), ("Add a task", "add"),
                         ("Complete a task", "done"), ("Record an accomplishment", "log"),
-                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups"), ("Review accomplishments", "review")],
+                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups"), ("Review accomplishments", "review"),
+                        ("Manage projects", "projects"), ("Manage recurring series", "series")],
                         cancel_label="Exit")
                 except (Back, Cancel):
                     return 0
@@ -887,6 +1015,10 @@ def run(path):
                         capture(con, path)
                     elif action == "review":
                         review(con, path)
+                    elif action == "projects":
+                        manage_projects(con, path)
+                    elif action == "series":
+                        manage_series(con, path)
                     elif action == "followups":
                         manage_followups(con, path)
                     elif action == "roles":

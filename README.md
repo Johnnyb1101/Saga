@@ -86,8 +86,8 @@ The CLI covers capture, daily work, review evidence, and recovery.
 
 The guided terminal interface covers daily capture, task selection, measurement
 follow-ups, review browsing, and accomplishment corrections. Remaining work
-includes guided project/series management, consistent connection cleanup,
-and export-destination configuration.
+includes consistent connection cleanup and export-destination configuration.
+Guided project and recurring-series management is also available.
 A future graphical interface will use the same core functions.
 
 ## Requirements
@@ -190,8 +190,8 @@ exits and discards unconfirmed answers. Existing direct commands and their
 prompt behavior remain available; scripts without a terminal still receive
 help rather than entering the menu.
 
-This menu does not close projects or stop series independently; use the
-existing direct commands where supported. Adding a project within a task form
+Manage projects can close projects, and Manage recurring series can stop
+future occurrences while retaining the current task. Adding a project within a task form
 records its name only. Standalone accomplishments do not acquire a project
 through this menu. `None / not applicable` is one stored empty state: distinct
 unknown/not-applicable answers require a later data-model change.
@@ -455,6 +455,27 @@ the installed backup runner also requires the current database version.
 
 ## Task and project maintenance
 
+Choose **Manage projects** to create or browse projects. Creation asks for a
+name and explicit choices for optional description, start date, and deadline,
+then offers Save, Edit answers, or Discard draft. Back revisits a question;
+`:discard`, EOF, or Ctrl+C discards unconfirmed answers. Dates use `YYYY-MM-DD`;
+past dates are allowed. Projects are created active, and duplicate names remain
+allowed; visible ids distinguish them.
+
+Project browsing offers search and eight-row pages, including on-hold and
+closed projects. Lists show status, deadline, and open-task count. Select a row
+to inspect its description/dates, view its associated open tasks, or close it.
+Closure requires explicit confirmation and no open tasks; it marks an active
+or on-hold project done without changing tasks or archive records. Resolve open
+tasks through the existing task workflows first. Project editing, reopening,
+and new lifecycle actions are not included.
+
+Management inspection does not refresh exports. Successful changes refresh
+exports for the default database and return to the management menu/list. If
+export fails after saving, retry export without repeating the saved action.
+Closure and series stopping recheck the selected record and its open tasks
+under a write lock; if either changed after inspection, select it again.
+
 To edit an open task, launch the guided menu, choose **Browse tasks / today**,
 select its row, then choose **Edit task**. You can keep or change its title,
 category, role/responsibility, and project. The preview shows before/after
@@ -488,6 +509,15 @@ tasks cannot be assigned to done or cancelled projects. Reopening is not
 part of these commands. Cancelling a recurring task also stops its series.
 
 ## Recurring tasks
+
+Choose **Manage recurring series** to search and browse schedules by numbered
+rows. Lists show status, schedule, category, role, project, and current task;
+details also show the anchor date and the current task's title and due date.
+Stopped series remain visible, including those with no open occurrence.
+Confirm **Stop future occurrences** to stop an active series while leaving
+its current task open. Completing that task afterward creates no successor.
+Returning from confirmation changes nothing. Series editing/restarting remains
+deferred; create a new repeating task for a different schedule.
 
 Create a series with a first due date and a daily, weekly, or monthly interval:
 
