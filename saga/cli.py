@@ -763,12 +763,12 @@ def build_parser():
                    help="list missing evidence and invalid quantities instead of totals")
     p.set_defaults(func=cmd_review)
 
-    p = sub.add_parser("export", help="regenerate exports/ for outside consumers",
+    p = sub.add_parser("export", help="regenerate exports for outside consumers",
                        description="Write brief.json, brief.md, review.json and manifest.json. "
                                    "Runs automatically after every write to the "
                                    "default database.")
-    p.add_argument("--out", type=Path, default=export.EXPORT_DIR, metavar="DIR",
-                   help="where to write (default: exports/)")
+    p.add_argument("--out", type=Path, metavar="DIR",
+                   help="destination (overrides SAGA_EXPORT_DIR; default: repository exports/)")
     p.add_argument("--since", metavar="DATE", help="review period start, YYYY-MM-DD")
     p.add_argument("--until", metavar="DATE", help="review period end, YYYY-MM-DD")
     p.set_defaults(func=cmd_export, refresh=False)

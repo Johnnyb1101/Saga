@@ -85,8 +85,8 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Morning brief script (scheduler setup is machine-specific)
 
 The guided terminal interface covers daily capture, task selection, measurement
-follow-ups, review browsing, and accomplishment corrections. Remaining work
-includes export-destination configuration.
+follow-ups, review browsing, and accomplishment corrections. Export output
+can be configured with `SAGA_EXPORT_DIR` or an explicit `export --out` path.
 Guided project and recurring-series management is also available.
 A future graphical interface will use the same core functions.
 
@@ -135,7 +135,7 @@ schema is version 5. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
-use `--out DIR` to avoid overwriting the default exports.
+use `--out DIR` to avoid overwriting the configured/default exports.
 
 ## Usage
 
@@ -230,7 +230,7 @@ python main.py review --check-evidence [--since DATE] [--until DATE] [--category
 python main.py completions [--since DATE] [--until DATE] [--category NAME] [--duty NAME | --unassigned]
 python main.py history ID               # all revisions of a completion
 python main.py correct ID --reason "..." --outcome "..."
-python main.py export [--out DIR]       # regenerate exports/
+python main.py export [--out DIR]       # regenerate exports at the selected destination
 python main.py backup --out DIR         # create a verified database snapshot
 
 python main.py --db PATH <command>      # run against a different database
@@ -744,6 +744,49 @@ not touch the default `data/saga.db`. Keep real records out of the demo file.
 
 ## Morning brief and exports
 
+Export destination precedence is **explicit `export --out DIR`**, then
+**`SAGA_EXPORT_DIR`**, then the repository's **`exports`** directory. An unset,
+empty, or whitespace-only variable uses the repository default. Relative paths
+in `SAGA_EXPORT_DIR` are relative to the repository root, so changing a
+scheduler's working directory does not move exports. Explicit relative `--out`
+paths remain relative to the command's working directory. Path text is literal:
+Saga does not expand `~` or embedded environment-variable names.
+On Windows, use a full absolute path such as `C:\SagaExports` or an ordinary
+relative path such as `synced-exports`; ambiguous `C:exports` and `\exports`
+environment paths are rejected.
+
+For example, choose a destination and set it for the current PowerShell session:
+
+```powershell
+$env:SAGA_EXPORT_DIR = 'D:\SagaExports'
+.\.venv\Scripts\python.exe main.py export
+```
+
+To use OneDrive, assign an already-expanded path such as
+`$env:SAGA_EXPORT_DIR = Join-Path $env:OneDrive 'SagaExports'` when OneDrive is
+configured. Keep the working database on local disk; only exports belong in
+the synced destination. The setting is read when exports are checked or
+written, and applies to direct commands, guided post-save exports, and the
+morning script's normal freshness checks. Scheduled processes must receive
+the setting in their own environment; setting it in one terminal does not
+configure an existing scheduler process. Saga does not change your environment
+or scheduler configuration.
+
+An explicit `--out` overrides the environment for that export only. Changing
+the destination creates a new export set there; it does not move or delete
+older exports. No fallback destination is used when a configured path fails.
+Post-save failures still report that the database change was saved. Correct
+the destination and retry export rather than repeating the database action.
+Backup destinations remain controlled by their separate `--out` option.
+
+Alternate databases still do not automatically refresh exports. An explicit
+export from any database uses the same destination precedence; supply a
+separate `--out` to keep a demo or recovered database's exports apart:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --db data/demo.db export --out demo-exports
+```
+
 `python morning.py` prints the `today` and `upcoming` views using Saga's CLI
 and default database. It logs runs to `morning.log` and waits for Enter when
 a terminal is attached. The script does not install a scheduled task. To
@@ -820,7 +863,7 @@ can produce inconsistent copies. Keep the working database on local disk;
 sync generated exports or closed backup snapshots instead.
 
 **External consumers use exports; Saga's own interfaces use the core.**
-External consumers read `exports/brief.json`, which carries a version
+External consumers read `brief.json` in the selected export directory, which carries a version
 field. The schema can change without breaking anything downstream, and the
 consumer never needs to know SQL.
 

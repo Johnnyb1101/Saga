@@ -23,6 +23,26 @@ class ExportError(ValueError):
     """An export failed; existing files may require a publication retry."""
 
 
+def resolve_destination(out_dir=None):
+    """Explicit paths win; relative environment paths belong to the repository.
+
+    Read the environment at call time, including in long-lived guided sessions.
+    Preserve nonblank path text literally; shell/user expansion is the caller's job.
+    """
+    if out_dir is not None:
+        return Path(out_dir)
+    configured = os.environ.get('SAGA_EXPORT_DIR')
+    if configured is None or not configured.strip():
+        return EXPORT_DIR
+    destination = Path(configured)
+    if destination.is_absolute():
+        return destination
+    if destination.anchor:
+        raise ValueError("SAGA_EXPORT_DIR must be a full absolute path or a repository-relative path "
+                         "without a drive/root prefix")
+    return db.ROOT / destination
+
+
 def as_dicts(rows):
     """sqlite3.Row is not JSON-serialisable. Plain dicts are."""
     return [dict(row) for row in rows]
@@ -110,11 +130,11 @@ def brief_markdown(brief):
     return "\n".join(lines)
 
 
-def write_all(con, out_dir=EXPORT_DIR, since=None, until=None):
+def write_all(con, out_dir=None, since=None, until=None):
     """Stage all files, replace each atomically, and publish the manifest last."""
-    out_dir = Path(out_dir)
     staged = []
     try:
+        out_dir = resolve_destination(out_dir)
         # A savepoint pins all queries to one snapshot without committing any
         # caller-owned transaction. No filesystem work holds the read snapshot.
         con.execute("SAVEPOINT saga_export_snapshot")
@@ -161,10 +181,10 @@ def write_all(con, out_dir=EXPORT_DIR, since=None, until=None):
             raise ExportError("Export temporary-file cleanup failed: " + "; ".join(cleanup_errors))
 
 
-def is_stale(out_dir=EXPORT_DIR):
+def is_stale(out_dir=None):
     """True unless today's complete export set matches its final manifest."""
-    out_dir = Path(out_dir)
     try:
+        out_dir = resolve_destination(out_dir)
         manifest_bytes = (out_dir / "manifest.json").read_bytes()
         manifest = json.loads(manifest_bytes)
         if not isinstance(manifest, dict) or manifest.get("schema_version") != MANIFEST_VERSION:
