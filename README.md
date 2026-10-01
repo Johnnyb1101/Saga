@@ -85,8 +85,9 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Morning brief script (scheduler setup is machine-specific)
 
 The guided terminal interface covers daily capture, task selection, measurement
-follow-ups, and review browsing. Remaining work includes general guided
-corrections, consistent connection cleanup, and export-destination configuration.
+follow-ups, review browsing, and accomplishment corrections. Remaining work
+includes export-destination configuration.
+Guided project and recurring-series management is also available.
 A future graphical interface will use the same core functions.
 
 ## Requirements
@@ -189,9 +190,8 @@ exits and discards unconfirmed answers. Existing direct commands and their
 prompt behavior remain available; scripts without a terminal still receive
 help rather than entering the menu.
 
-This menu does not close projects, stop series independently, or guide
-general archive corrections; use the
-existing direct commands where supported. Adding a project within a task form
+Manage projects can close projects, and Manage recurring series can stop
+future occurrences while retaining the current task. Adding a project within a task form
 records its name only. Standalone accomplishments do not acquire a project
 through this menu. `None / not applicable` is one stored empty state: distinct
 unknown/not-applicable answers require a later data-model change.
@@ -335,9 +335,10 @@ The review menu offers the summary, searchable eight-row accomplishment pages,
 evidence gaps, and filter changes. Select a row to inspect its saved context,
 measurement state, actual completion date, and entry time, or view every
 revision in its history. Returning from details retains the review filters.
-Review inspection does not change records or refresh exports. Use existing
-direct `correct` commands or Measurement follow-ups to update evidence;
-general guided correction forms remain future work.
+Review inspection does not change records or refresh exports. Select
+**Correct accomplishment** from a record's actions to append corrected evidence.
+Direct `correct` commands remain available; use Measurement follow-ups for
+reminder-only rescheduling.
 
 Direct commands accept the same filters:
 
@@ -454,6 +455,27 @@ the installed backup runner also requires the current database version.
 
 ## Task and project maintenance
 
+Choose **Manage projects** to create or browse projects. Creation asks for a
+name and explicit choices for optional description, start date, and deadline,
+then offers Save, Edit answers, or Discard draft. Back revisits a question;
+`:discard`, EOF, or Ctrl+C discards unconfirmed answers. Dates use `YYYY-MM-DD`;
+past dates are allowed. Projects are created active, and duplicate names remain
+allowed; visible ids distinguish them.
+
+Project browsing offers search and eight-row pages, including on-hold and
+closed projects. Lists show status, deadline, and open-task count. Select a row
+to inspect its description/dates, view its associated open tasks, or close it.
+Closure requires explicit confirmation and no open tasks; it marks an active
+or on-hold project done without changing tasks or archive records. Resolve open
+tasks through the existing task workflows first. Project editing, reopening,
+and new lifecycle actions are not included.
+
+Management inspection does not refresh exports. Successful changes refresh
+exports for the default database and return to the management menu/list. If
+export fails after saving, retry export without repeating the saved action.
+Closure and series stopping recheck the selected record and its open tasks
+under a write lock; if either changed after inspection, select it again.
+
 To edit an open task, launch the guided menu, choose **Browse tasks / today**,
 select its row, then choose **Edit task**. You can keep or change its title,
 category, role/responsibility, and project. The preview shows before/after
@@ -487,6 +509,15 @@ tasks cannot be assigned to done or cancelled projects. Reopening is not
 part of these commands. Cancelling a recurring task also stops its series.
 
 ## Recurring tasks
+
+Choose **Manage recurring series** to search and browse schedules by numbered
+rows. Lists show status, schedule, category, role, project, and current task;
+details also show the anchor date and the current task's title and due date.
+Stopped series remain visible, including those with no open occurrence.
+Confirm **Stop future occurrences** to stop an active series while leaving
+its current task open. Completing that task afterward creates no successor.
+Returning from confirmation changes nothing. Series editing/restarting remains
+deferred; create a new repeating task for a different schedule.
 
 Create a series with a first due date and a daily, weekly, or monthly interval:
 
@@ -528,6 +559,43 @@ no completion history is changed. Brief JSON task objects gain nullable
 `recurrence_id` and `occurrence_index` fields; existing fields remain intact.
 
 ## Historical context and corrections
+
+In the guided menu, open **Review accomplishments**, browse accomplishments
+or evidence gaps, select a row, and choose **Correct accomplishment**. Select
+only the fields you want to change; other evidence stays as recorded. Outcome,
+category, role, actual completion date, measurement, and review flag offer
+explicit Keep/Change choices. **Historical context** optionally corrects the
+saved task title, deadline, project name, or review eligibility. These are
+archive snapshots: changing them does not edit live tasks/projects or create
+a project. Optional saved labels and deadlines can be explicitly cleared.
+
+The preview shows every before/after value, including unchanged evidence.
+Changing category requires choosing a compatible role or None and previews
+that category's current review eligibility. Historical context can explicitly
+override that eligibility. An unchanged historical category/role pair can
+retain a retired role; a new assignment requires an active role. Proposed new
+roles and measurement units remain in the draft until Save.
+
+**Save correction** requires a nonblank reason and a final Save/Edit answers/
+Discard draft choice. Back returns to the field picker; within Historical
+context it returns to that section or the correction picker. `:discard`, EOF,
+and Ctrl+C discard unconfirmed changes. Unchanged evidence saves nothing.
+Corrected evidence requires a nonblank outcome and finite measurements.
+
+Keeping the actual completion date preserves its exact timestamp. Keeping an
+unknown measurement preserves its reminder, even when overdue. Resolving it
+as Measured or Not applicable closes the reminder; choosing Not known yet
+requires a date today or later. Reminder-only date changes belong in
+Measurement follow-ups. The completion revision, new roles/units, and reminder
+changes save together or roll back together. If the revision or reminder
+changed while the draft was open, discard and select the record again.
+
+After saving, the browser reapplies your review filters to current revisions.
+A corrected record can therefore leave the selected period, category, role,
+or evidence-gap list. Inspection skips export refresh; a saved correction
+refreshes exports for the default database. An export failure explicitly says
+the correction was saved: retry export, not the correction. Database schema 5,
+brief format 2, and review format 4 are unchanged by this workflow.
 
 New completions save the task title, due date, project name, and category's
 review eligibility at capture time. Later edits to working tasks, projects,
@@ -798,6 +866,10 @@ Dependabot begins scheduled updates once its configuration is on the
 default branch.
 
 Tests use invented records in temporary or in-memory databases. They cover
+CLI connection cleanup on success, failure, and interrupted prompts, including
+preservation of committed writes when export fails. Schema validation failures
+also release their connection; successful connections remain owned by the caller.
+The tests also cover
 backup recovery, capture, completion rollback, date boundaries, review
 filters, immutable snapshots, correction chains, migration preservation,
 and exports. The version-zero schema in

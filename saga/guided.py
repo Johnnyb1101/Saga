@@ -43,6 +43,8 @@ class Measurement:
             return f"{self.quantity:g} {self.unit}"
         if self.status == 'unknown':
             return f"Not known yet; remind me on {self.remind_on}"
+        if self.status == 'unspecified':
+            return "Unspecified (no measurement decision recorded)"
         return "Not applicable (narrative evidence)"
 
 
@@ -655,7 +657,143 @@ def show_completion(row, current=True):
         print(f"  {label}: {line(row[field]) if row[field] is not None else '-'}")
 
 
-def browse_completions(con, scope, gaps_only=False):
+def correction_preview(original, draft, reason):
+    print("\nREVIEW BEFORE SAVING - Correct accomplishment")
+    labels = {'outcome': 'Outcome', 'category': 'Category', 'duty': 'Role or responsibility',
+              'completed_at': 'Actual completion date', 'measurement': 'Measurement',
+              'flagged': 'Flag for review', 'task_title': 'Saved task title',
+              'due_date': 'Saved deadline', 'project_name': 'Saved project name',
+              'review_counting': 'Saved review eligibility'}
+    for field, label in labels.items():
+        before, after = display(original[field]), display(draft[field])
+        print(f"  {label}: {before} -> {after}" if draft[field] != original[field]
+              else f"  {label}: {after} (unchanged)")
+    print(f"  Correction reason: {line(reason) if reason else '(required before saving)'}")
+    print("Saving appends a revision. Original evidence and working tasks/projects remain unchanged.")
+
+
+def correction_context(draft):
+    """Edit saved historical labels, never live tasks or project registrations."""
+    while True:
+        try:
+            field = choose("Historical context", [("Saved task title", 'task_title'),
+                ("Saved deadline", 'due_date'), ("Saved project name", 'project_name'),
+                ("Saved review eligibility", 'review_counting')])
+        except Back:
+            return
+        try:
+            if field == 'review_counting':
+                draft[field] = choose("Saved review eligibility", [
+                    (f"Keep {display(draft[field])}", draft[field]), ("Counts toward review", True),
+                    ("Does not count toward review", False)])
+            else:
+                action = choose(f"Saved {field.replace('_', ' ')}: {display(draft[field])}",
+                                [("Keep", 'keep'), ("Change", 'change'), ("Clear", 'clear')])
+                if action == 'clear':
+                    draft[field] = None
+                elif action == 'change':
+                    draft[field] = day() if field == 'due_date' else answer("Corrected saved text")
+        except Back:
+            continue
+
+
+def correct_accomplishment(con, path, selected):
+    """Draft explicit evidence changes, preview all effects, then append one revision."""
+    row = con.execute("SELECT * FROM current_completions WHERE id=?", (selected['id'],)).fetchone()
+    if row is None:
+        print("This accomplishment was superseded. Select its latest revision again.")
+        return False
+    original_row = dict(row)
+    followup = con.execute("SELECT * FROM measurement_followups WHERE completion_id=?", (row['id'],)).fetchone()
+    expected_followup = dict(followup) if followup is not None else None
+    initial = {field: row[field] for field in ('outcome', 'category', 'completed_at',
+               'task_title', 'due_date', 'project_name')}
+    initial.update(duty=Reference(row['duty'], row['duty'] or 'None / not applicable'),
+                   flagged=bool(row['flagged']), review_counting=bool(row['review_counting']),
+                   measurement=Measurement(row['measurement_status'],
+                       Reference(row['measure'], row['measure'] or 'No unit'), row['quantity'],
+                       followup['remind_on'] if followup is not None and followup['status'] == 'open' else None))
+    draft = dict(initial)
+    reason = None
+    while True:
+        correction_preview(initial, draft, reason)
+        try:
+            field = choose("Correct accomplishment", [("Outcome", 'outcome'), ("Category", 'category'),
+                ("Role or responsibility", 'duty'), ("Actual completion date", 'completed_at'),
+                ("Measurement", 'measurement'), ("Flag for review", 'flagged'),
+                ("Historical context (optional)", 'context'), ("Correction reason", 'reason'),
+                ("Save correction", 'save')], cancel_label="Discard draft")
+            if field == 'context':
+                correction_context(draft)
+                continue
+            if field == 'reason':
+                reason = answer("Why is this evidence being corrected?")
+                continue
+            if field == 'save':
+                values, new = refs({'duty': draft['duty']})
+                values.update({key: draft[key] for key in ('outcome', 'category', 'completed_at',
+                              'flagged', 'task_title', 'due_date', 'project_name', 'review_counting')})
+                if draft['measurement'] != initial['measurement']:
+                    measured, registration = refs({'measurement': draft['measurement']})
+                    values.update(measured)
+                    new.update(registration)
+                changes = {key: value for key, value in values.items()
+                           if key == 'remind_on' or value != original_row[key]}
+                # Include all measurement fields together so inference cannot turn a
+                # deliberate measurement state into an unspecified one.
+                if draft['measurement'] != initial['measurement']:
+                    changes.update(measured)
+                if draft['category'] != initial['category']:
+                    changes['review_counting'] = draft['review_counting']
+                if not new and not any(key in writes.CORRECTION_FIELDS and value != original_row[key]
+                                       for key, value in changes.items()):
+                    print("No evidence changes to save. Use Measurement follow-ups for reminder-only rescheduling.")
+                    continue
+                if reason is None:
+                    reason = answer("Why is this evidence being corrected?")
+                correction_preview(initial, draft, reason)
+                decision = choose("Confirm correction", [("Save", 'save'), ("Edit answers", 'edit'),
+                                                           ("Discard draft", 'discard')])
+                if decision == 'discard':
+                    return False
+                if decision == 'edit':
+                    continue
+                try:
+                    revision = writes.save_guided_correction(con, original_row, expected_followup,
+                                                             reason, **new, **changes)
+                except (ValueError, sqlite3.Error, OSError) as exc:
+                    print(f"Could not save: {exc}. Edit or discard this draft.")
+                    continue
+                saved(con, path, f"Correction {revision} saved. No additional accomplishment counted.")
+                return True
+            if choose(f"{field.replace('_', ' ').capitalize()}: {display(draft[field])}",
+                      [("Keep", True), ("Change", False)]):
+                continue
+            if field == 'outcome':
+                draft[field] = answer("What happened and why did it matter?")
+            elif field == 'category':
+                selected_category = category(con)
+                if selected_category != draft['category']:
+                    print("Choose a compatible role or None. Review eligibility will use this category's current setting.")
+                    role = reference(con, 'duty', selected_category)
+                    eligibility = next(r['counts_toward_review'] for r in reads.categories(con)
+                                       if r['name'] == selected_category)
+                    draft.update(category=selected_category, duty=role, review_counting=bool(eligibility))
+            elif field == 'duty':
+                draft[field] = reference(con, 'duty', draft['category'])
+            elif field == 'completed_at':
+                draft[field] = day(completed=True) or dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            elif field == 'measurement':
+                draft[field] = measurement(con)
+            elif field == 'flagged':
+                draft[field] = choose("Flag for review?", [("Yes", True), ("No", False)])
+        except Back:
+            continue
+        except Cancel:
+            return False
+
+
+def browse_completions(con, scope, gaps_only=False, *, path):
     from saga import analytics
 
     while True:
@@ -682,7 +820,12 @@ def browse_completions(con, scope, gaps_only=False):
         while True:
             show_completion(row)
             try:
-                choose("Accomplishment action", [("View revision history", "history")], cancel_label="Return")
+                action = choose("Accomplishment action", [("View revision history", "history"),
+                    ("Correct accomplishment", "correct")], cancel_label="Return")
+                if action == 'correct':
+                    correct_accomplishment(con, path, row)
+                    # Requery current revisions and filters even after a stale selection.
+                    break
                 history = reads.completion_history(con, row['id'])
                 for revision in history:
                     show_completion(revision, revision['id'] == history[-1]['id'])
@@ -690,7 +833,7 @@ def browse_completions(con, scope, gaps_only=False):
                 break
 
 
-def review(con):
+def review(con, path):
     from saga.cli import show_review, show_review_scope
 
     scope = review_scope(con)
@@ -712,8 +855,135 @@ def review(con):
         else:
             if action == "gaps":
                 print("Review-counting or flagged entries; missing fields are prompts, not requirements.")
-                print("Use direct correct commands or Measurement follow-ups to update evidence.")
-            browse_completions(con, scope, gaps_only=action == "gaps")
+                print("Select an accomplishment to correct it, or use Measurement follow-ups for reminder-only changes.")
+            browse_completions(con, scope, gaps_only=action == "gaps", path=path)
+
+
+def project_day(label):
+    selected = choose(label, [("No date", None), ("Today", 'today'), ("Enter a date", 'date')])
+    if selected is None:
+        return None
+    if selected == 'today':
+        return dt.date.today().isoformat()
+    while True:
+        value = answer(f"{label} (YYYY-MM-DD)")
+        try:
+            if dt.date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+        print("Enter a valid date in YYYY-MM-DD form.")
+
+
+def create_project(con, path):
+    def description():
+        include = choose("Description", [("Enter text", True), ("None", False)])
+        return answer("Project description") if include else None
+
+    def save(draft):
+        project_id = writes.add_project(con, **draft)
+        saved(con, path, f"Created project {project_id}: {line(draft['name'])}.")
+
+    form("Create project", [("name", "Project name", lambda: answer("Project name")),
+        ("description", "Description", description),
+        ("start_date", "Start date", lambda: project_day("Start date")),
+        ("deadline", "Deadline", lambda: project_day("Deadline"))], save)
+
+
+def manage_projects(con, path):
+    while True:
+        try:
+            action = choose("Manage projects", [("Browse projects", 'browse'), ("Create project", 'create')],
+                            cancel_label="Return")
+        except (Back, Cancel):
+            return
+        try:
+            if action == 'create':
+                create_project(con, path)
+                continue
+            while True:
+                rows = reads.projects(con)
+                if not rows:
+                    print("No projects. Choose Create project to add one.")
+                    break
+                selected = pick("Projects", [((f"{r['name']} [{r['status']}; deadline {r['deadline'] or 'none'}; "
+                                               f"{r['open_tasks']} open tasks; ID {r['id']}]"), r['id']) for r in rows])
+                row = reads.project_details(con, selected)
+                if row is None:
+                    print("Project changed; select it again.")
+                    continue
+                tasks = reads.project_open_tasks(con, selected)
+                print(f"\nPROJECT {row['id']}: {line(row['name'])}")
+                for field in ('status', 'description', 'start_date', 'deadline'):
+                    print(f"  {field.replace('_', ' ').capitalize()}: {display(row[field])}")
+                print(f"  {len(tasks)} open tasks")
+                try:
+                    action = choose("Project action", [("View open tasks", 'tasks'), ("Close project", 'close')],
+                                    cancel_label="Return")
+                    if action == 'tasks':
+                        if not tasks:
+                            print("No open tasks.")
+                        else:
+                            pick("Open project tasks (select to return)", [((f"{t['title']} [{t['category']}; "
+                                f"{t['duty'] or 'no role'}; due {t['due_date'] or 'none'}; ID {t['id']}]"), t['id'])
+                                for t in tasks])
+                    elif tasks:
+                        print("Cannot close this project while tasks remain open. Complete or cancel them first.")
+                    elif row['status'] not in ('active', 'on_hold'):
+                        print("This project is already closed.")
+                    else:
+                        choose(f"Close {line(row['name'])}? Status will become done; history is retained.",
+                               [("Close project", True)], cancel_label="Return")
+                        writes.save_guided_management(con, 'close_project', dict(row), [])
+                        saved(con, path, f"Closed project {row['id']}.")
+                except (Back, Cancel):
+                    continue
+                except (ValueError, sqlite3.Error, OSError) as exc:
+                    print(f"Could not finish project action: {exc}")
+        except (Back, Cancel):
+            continue
+
+
+def manage_series(con, path):
+    while True:
+        rows = reads.recurrences(con)
+        if not rows:
+            print("No recurring series. Create a repeating task through Add a task.")
+            return
+        projects = {r['id']: r['name'] for r in reads.projects(con)}
+        try:
+            selected = pick("Recurring series", [((f"{r['title']} [{r['status']}; {r['category']}; "
+                f"{r['duty'] or 'no role'}; {projects.get(r['project_id'], 'no project')}; "
+                f"every {r['interval']} {r['frequency']} interval(s); "
+                f"current task {r['task_id'] if r['task_id'] is not None else 'none'}; "
+                f"due {r['due_date'] or 'none'}; ID {r['id']}]"), r['id']) for r in rows])
+        except (Back, Cancel):
+            return
+        row = reads.recurrence_details(con, selected)
+        if row is None:
+            print("Series changed; select it again.")
+            continue
+        task = reads.open_occurrence(con, selected)
+        print(f"\nSERIES {row['id']}: {line(row['title'])} [{row['status']}]")
+        print(f"  Schedule: every {row['interval']} {row['frequency']} interval(s), anchored {row['anchor_date']}")
+        print(f"  Category: {row['category']}; role: {row['duty'] or 'none'}; "
+              f"project: {line(projects.get(row['project_id'], 'none'))}")
+        if task is None:
+            print("  No open occurrence.")
+        else:
+            print(f"  Current task {task['id']}: {line(task['title'])}; due {task['due_date'] or 'none'}")
+        if row['status'] == 'stopped':
+            print("This series is already stopped. Its remaining task can still be completed or cancelled.")
+            continue
+        try:
+            choose("Stop future occurrences? The current task stays open; completing it will not create a successor.",
+                   [("Stop future occurrences", True)], cancel_label="Return")
+            writes.save_guided_management(con, 'stop_recurrence', dict(row), [] if task is None else [dict(task)])
+            saved(con, path, f"Stopped series {row['id']}; current task retained.")
+        except (Back, Cancel):
+            continue
+        except (ValueError, sqlite3.Error, OSError) as exc:
+            print(f"Could not stop series: {exc}")
 
 
 def run(path):
@@ -733,7 +1003,8 @@ def run(path):
                 try:
                     action = choose("Main menu", [("Browse tasks / today", "browse"), ("Add a task", "add"),
                         ("Complete a task", "done"), ("Record an accomplishment", "log"),
-                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups"), ("Review accomplishments", "review")],
+                        ("Reschedule a task", "reschedule"), ("Cancel a task", "cancel"), ("Manage roles", "roles"), ("Measurement follow-ups", "followups"), ("Review accomplishments", "review"),
+                        ("Manage projects", "projects"), ("Manage recurring series", "series")],
                         cancel_label="Exit")
                 except (Back, Cancel):
                     return 0
@@ -743,7 +1014,11 @@ def run(path):
                     elif action == "log":
                         capture(con, path)
                     elif action == "review":
-                        review(con)
+                        review(con, path)
+                    elif action == "projects":
+                        manage_projects(con, path)
+                    elif action == "series":
+                        manage_series(con, path)
                     elif action == "followups":
                         manage_followups(con, path)
                     elif action == "roles":

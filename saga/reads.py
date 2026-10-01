@@ -118,6 +118,19 @@ def projects(con):
     ).fetchall()
 
 
+def project_details(con, project_id):
+    return con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+
+
+def project_open_tasks(con, project_id):
+    return con.execute("SELECT * FROM tasks WHERE project_id=? AND status='open' "
+                       "ORDER BY due_date IS NULL, due_date, id", (project_id,)).fetchall()
+
+
+def recurrence_details(con, recurrence_id):
+    return con.execute("SELECT * FROM recurrences WHERE id=?", (recurrence_id,)).fetchone()
+
+
 def recurrences(con):
     """All schedules, with their one open instance if present."""
     return con.execute(

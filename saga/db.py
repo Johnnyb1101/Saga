@@ -8,7 +8,7 @@ off by default and the setting is per-connection, not stored in the file.
 import datetime as dt
 import sqlite3
 import tempfile
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 
 from saga.roles import name_key
@@ -47,19 +47,21 @@ def connect(db_path=DB_PATH):
         raise FileNotFoundError(
             f"No database at {db_path}. Run 'python main.py init' first."
         )
-    con = _open(db_path)
-    version = schema_version(con)
-    if version < SCHEMA_VERSION:
-        raise ValueError(
-            f"{db_path} is at schema version {version}, this code expects "
-            f"{SCHEMA_VERSION}. Run 'python main.py migrate' to bring it forward."
-        )
-    if version > SCHEMA_VERSION:
-        raise ValueError(
-            f"{db_path} is at schema version {version}, which is newer than "
-            f"this code ({SCHEMA_VERSION}). Update the code; do not migrate."
-        )
-    return con
+    with ExitStack() as cleanup:
+        con = cleanup.enter_context(closing(_open(db_path)))
+        version = schema_version(con)
+        if version < SCHEMA_VERSION:
+            raise ValueError(
+                f"{db_path} is at schema version {version}, this code expects "
+                f"{SCHEMA_VERSION}. Run 'python main.py migrate' to bring it forward."
+            )
+        if version > SCHEMA_VERSION:
+            raise ValueError(
+                f"{db_path} is at schema version {version}, which is newer than "
+                f"this code ({SCHEMA_VERSION}). Update the code; do not migrate."
+            )
+        cleanup.pop_all()  # Ownership transfers to the caller only after validation.
+        return con
 
 
 def init_db(db_path=DB_PATH):
