@@ -85,8 +85,9 @@ The CLI covers capture, daily work, review evidence, and recovery.
 - [x] Morning brief script (scheduler setup is machine-specific)
 
 The guided terminal interface covers daily capture, task selection, measurement
-follow-ups, and review browsing. Remaining work includes general guided
-corrections, consistent connection cleanup, and export-destination configuration.
+follow-ups, review browsing, and accomplishment corrections. Export output
+can be configured with `SAGA_EXPORT_DIR` or an explicit `export --out` path.
+Guided project and recurring-series management is also available.
 A future graphical interface will use the same core functions.
 
 ## Requirements
@@ -134,7 +135,7 @@ schema is version 5. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
-use `--out DIR` to avoid overwriting the default exports.
+use `--out DIR` to avoid overwriting the configured/default exports.
 
 ## Usage
 
@@ -189,9 +190,8 @@ exits and discards unconfirmed answers. Existing direct commands and their
 prompt behavior remain available; scripts without a terminal still receive
 help rather than entering the menu.
 
-This menu does not close projects, stop series independently, or guide
-general archive corrections; use the
-existing direct commands where supported. Adding a project within a task form
+Manage projects can close projects, and Manage recurring series can stop
+future occurrences while retaining the current task. Adding a project within a task form
 records its name only. Standalone accomplishments do not acquire a project
 through this menu. `None / not applicable` is one stored empty state: distinct
 unknown/not-applicable answers require a later data-model change.
@@ -230,7 +230,7 @@ python main.py review --check-evidence [--since DATE] [--until DATE] [--category
 python main.py completions [--since DATE] [--until DATE] [--category NAME] [--duty NAME | --unassigned]
 python main.py history ID               # all revisions of a completion
 python main.py correct ID --reason "..." --outcome "..."
-python main.py export [--out DIR]       # regenerate exports/
+python main.py export [--out DIR]       # regenerate exports at the selected destination
 python main.py backup --out DIR         # create a verified database snapshot
 
 python main.py --db PATH <command>      # run against a different database
@@ -335,9 +335,10 @@ The review menu offers the summary, searchable eight-row accomplishment pages,
 evidence gaps, and filter changes. Select a row to inspect its saved context,
 measurement state, actual completion date, and entry time, or view every
 revision in its history. Returning from details retains the review filters.
-Review inspection does not change records or refresh exports. Use existing
-direct `correct` commands or Measurement follow-ups to update evidence;
-general guided correction forms remain future work.
+Review inspection does not change records or refresh exports. Select
+**Correct accomplishment** from a record's actions to append corrected evidence.
+Direct `correct` commands remain available; use Measurement follow-ups for
+reminder-only rescheduling.
 
 Direct commands accept the same filters:
 
@@ -454,6 +455,27 @@ the installed backup runner also requires the current database version.
 
 ## Task and project maintenance
 
+Choose **Manage projects** to create or browse projects. Creation asks for a
+name and explicit choices for optional description, start date, and deadline,
+then offers Save, Edit answers, or Discard draft. Back revisits a question;
+`:discard`, EOF, or Ctrl+C discards unconfirmed answers. Dates use `YYYY-MM-DD`;
+past dates are allowed. Projects are created active, and duplicate names remain
+allowed; visible ids distinguish them.
+
+Project browsing offers search and eight-row pages, including on-hold and
+closed projects. Lists show status, deadline, and open-task count. Select a row
+to inspect its description/dates, view its associated open tasks, or close it.
+Closure requires explicit confirmation and no open tasks; it marks an active
+or on-hold project done without changing tasks or archive records. Resolve open
+tasks through the existing task workflows first. Project editing, reopening,
+and new lifecycle actions are not included.
+
+Management inspection does not refresh exports. Successful changes refresh
+exports for the default database and return to the management menu/list. If
+export fails after saving, retry export without repeating the saved action.
+Closure and series stopping recheck the selected record and its open tasks
+under a write lock; if either changed after inspection, select it again.
+
 To edit an open task, launch the guided menu, choose **Browse tasks / today**,
 select its row, then choose **Edit task**. You can keep or change its title,
 category, role/responsibility, and project. The preview shows before/after
@@ -487,6 +509,15 @@ tasks cannot be assigned to done or cancelled projects. Reopening is not
 part of these commands. Cancelling a recurring task also stops its series.
 
 ## Recurring tasks
+
+Choose **Manage recurring series** to search and browse schedules by numbered
+rows. Lists show status, schedule, category, role, project, and current task;
+details also show the anchor date and the current task's title and due date.
+Stopped series remain visible, including those with no open occurrence.
+Confirm **Stop future occurrences** to stop an active series while leaving
+its current task open. Completing that task afterward creates no successor.
+Returning from confirmation changes nothing. Series editing/restarting remains
+deferred; create a new repeating task for a different schedule.
 
 Create a series with a first due date and a daily, weekly, or monthly interval:
 
@@ -528,6 +559,43 @@ no completion history is changed. Brief JSON task objects gain nullable
 `recurrence_id` and `occurrence_index` fields; existing fields remain intact.
 
 ## Historical context and corrections
+
+In the guided menu, open **Review accomplishments**, browse accomplishments
+or evidence gaps, select a row, and choose **Correct accomplishment**. Select
+only the fields you want to change; other evidence stays as recorded. Outcome,
+category, role, actual completion date, measurement, and review flag offer
+explicit Keep/Change choices. **Historical context** optionally corrects the
+saved task title, deadline, project name, or review eligibility. These are
+archive snapshots: changing them does not edit live tasks/projects or create
+a project. Optional saved labels and deadlines can be explicitly cleared.
+
+The preview shows every before/after value, including unchanged evidence.
+Changing category requires choosing a compatible role or None and previews
+that category's current review eligibility. Historical context can explicitly
+override that eligibility. An unchanged historical category/role pair can
+retain a retired role; a new assignment requires an active role. Proposed new
+roles and measurement units remain in the draft until Save.
+
+**Save correction** requires a nonblank reason and a final Save/Edit answers/
+Discard draft choice. Back returns to the field picker; within Historical
+context it returns to that section or the correction picker. `:discard`, EOF,
+and Ctrl+C discard unconfirmed changes. Unchanged evidence saves nothing.
+Corrected evidence requires a nonblank outcome and finite measurements.
+
+Keeping the actual completion date preserves its exact timestamp. Keeping an
+unknown measurement preserves its reminder, even when overdue. Resolving it
+as Measured or Not applicable closes the reminder; choosing Not known yet
+requires a date today or later. Reminder-only date changes belong in
+Measurement follow-ups. The completion revision, new roles/units, and reminder
+changes save together or roll back together. If the revision or reminder
+changed while the draft was open, discard and select the record again.
+
+After saving, the browser reapplies your review filters to current revisions.
+A corrected record can therefore leave the selected period, category, role,
+or evidence-gap list. Inspection skips export refresh; a saved correction
+refreshes exports for the default database. An export failure explicitly says
+the correction was saved: retry export, not the correction. Database schema 5,
+brief format 2, and review format 4 are unchanged by this workflow.
 
 New completions save the task title, due date, project name, and category's
 review eligibility at capture time. Later edits to working tasks, projects,
@@ -676,6 +744,49 @@ not touch the default `data/saga.db`. Keep real records out of the demo file.
 
 ## Morning brief and exports
 
+Export destination precedence is **explicit `export --out DIR`**, then
+**`SAGA_EXPORT_DIR`**, then the repository's **`exports`** directory. An unset,
+empty, or whitespace-only variable uses the repository default. Relative paths
+in `SAGA_EXPORT_DIR` are relative to the repository root, so changing a
+scheduler's working directory does not move exports. Explicit relative `--out`
+paths remain relative to the command's working directory. Path text is literal:
+Saga does not expand `~` or embedded environment-variable names.
+On Windows, use a full absolute path such as `C:\SagaExports` or an ordinary
+relative path such as `synced-exports`; ambiguous `C:exports` and `\exports`
+environment paths are rejected.
+
+For example, choose a destination and set it for the current PowerShell session:
+
+```powershell
+$env:SAGA_EXPORT_DIR = 'D:\SagaExports'
+.\.venv\Scripts\python.exe main.py export
+```
+
+To use OneDrive, assign an already-expanded path such as
+`$env:SAGA_EXPORT_DIR = Join-Path $env:OneDrive 'SagaExports'` when OneDrive is
+configured. Keep the working database on local disk; only exports belong in
+the synced destination. The setting is read when exports are checked or
+written, and applies to direct commands, guided post-save exports, and the
+morning script's normal freshness checks. Scheduled processes must receive
+the setting in their own environment; setting it in one terminal does not
+configure an existing scheduler process. Saga does not change your environment
+or scheduler configuration.
+
+An explicit `--out` overrides the environment for that export only. Changing
+the destination creates a new export set there; it does not move or delete
+older exports. No fallback destination is used when a configured path fails.
+Post-save failures still report that the database change was saved. Correct
+the destination and retry export rather than repeating the database action.
+Backup destinations remain controlled by their separate `--out` option.
+
+Alternate databases still do not automatically refresh exports. An explicit
+export from any database uses the same destination precedence; supply a
+separate `--out` to keep a demo or recovered database's exports apart:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --db data/demo.db export --out demo-exports
+```
+
 `python morning.py` prints the `today` and `upcoming` views using Saga's CLI
 and default database. It logs runs to `morning.log` and waits for Enter when
 a terminal is attached. The script does not install a scheduled task. To
@@ -752,7 +863,7 @@ can produce inconsistent copies. Keep the working database on local disk;
 sync generated exports or closed backup snapshots instead.
 
 **External consumers use exports; Saga's own interfaces use the core.**
-External consumers read `exports/brief.json`, which carries a version
+External consumers read `brief.json` in the selected export directory, which carries a version
 field. The schema can change without breaking anything downstream, and the
 consumer never needs to know SQL.
 
@@ -798,6 +909,10 @@ Dependabot begins scheduled updates once its configuration is on the
 default branch.
 
 Tests use invented records in temporary or in-memory databases. They cover
+CLI connection cleanup on success, failure, and interrupted prompts, including
+preservation of committed writes when export fails. Schema validation failures
+also release their connection; successful connections remain owned by the caller.
+The tests also cover
 backup recovery, capture, completion rollback, date boundaries, review
 filters, immutable snapshots, correction chains, migration preservation,
 and exports. The version-zero schema in
