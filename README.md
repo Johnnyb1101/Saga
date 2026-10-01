@@ -86,7 +86,7 @@ The CLI covers capture, daily work, review evidence, and recovery.
 
 The guided terminal interface covers daily capture, task selection, measurement
 follow-ups, review browsing, and accomplishment corrections. Remaining work
-includes consistent connection cleanup and export-destination configuration.
+includes export-destination configuration.
 Guided project and recurring-series management is also available.
 A future graphical interface will use the same core functions.
 
@@ -866,6 +866,10 @@ Dependabot begins scheduled updates once its configuration is on the
 default branch.
 
 Tests use invented records in temporary or in-memory databases. They cover
+CLI connection cleanup on success, failure, and interrupted prompts, including
+preservation of committed writes when export fails. Schema validation failures
+also release their connection; successful connections remain owned by the caller.
+The tests also cover
 backup recovery, capture, completion rollback, date boundaries, review
 filters, immutable snapshots, correction chains, migration preservation,
 and exports. The version-zero schema in

@@ -73,43 +73,43 @@ def ask_choice(question, options):
         print("  Enter a number from the list.")
 
 def cmd_add(args):
-    con = db.connect(args.db)
-    guided = args.text is None
+    with closing(db.connect(args.db)) as con:
+        guided = args.text is None
 
-    text = args.text or ask("Task")
-    category = args.category
-    if category is None:
-        category = ask_choice("Category",
-                              [row["name"] for row in reads.categories(con)])
-    duty = args.duty
-    if duty is None and guided:
-        duty = ask_duty(con, category)
-    due = args.due
-    if due is None and guided:
-        due = ask("Due date (YYYY-MM-DD, blank for none)")
+        text = args.text or ask("Task")
+        category = args.category
+        if category is None:
+            category = ask_choice("Category",
+                                  [row["name"] for row in reads.categories(con)])
+        duty = args.duty
+        if duty is None and guided:
+            duty = ask_duty(con, category)
+        due = args.due
+        if due is None and guided:
+            due = ask("Due date (YYYY-MM-DD, blank for none)")
 
-    task_id = writes.add_task(con, text, category,
-                              project_id=args.project, due_date=due, duty=duty,
-                              repeat=args.repeat, interval=args.interval)
-    print(f"Added task {task_id}: {text}")
-    if args.repeat:
-        task = reads.get_task(con, task_id)
-        print(f"Recurring series {task['recurrence_id']}: every {args.interval} {args.repeat} interval(s).")
-    maybe_export(args, con)
+        task_id = writes.add_task(con, text, category,
+                                  project_id=args.project, due_date=due, duty=duty,
+                                  repeat=args.repeat, interval=args.interval)
+        print(f"Added task {task_id}: {text}")
+        if args.repeat:
+            task = reads.get_task(con, task_id)
+            print(f"Recurring series {task['recurrence_id']}: every {args.interval} {args.repeat} interval(s).")
+        maybe_export(args, con)
 
 def cmd_project(args):
-    con = db.connect(args.db)
-    guided = args.name is None
+    with closing(db.connect(args.db)) as con:
+        guided = args.name is None
 
-    name = args.name or ask("Project name")
-    deadline = args.deadline
-    if deadline is None and guided:
-        deadline = ask("Deadline (YYYY-MM-DD, blank for none)")
+        name = args.name or ask("Project name")
+        deadline = args.deadline
+        if deadline is None and guided:
+            deadline = ask("Deadline (YYYY-MM-DD, blank for none)")
 
-    project_id = writes.add_project(con, name, description=args.description,
-                                    start_date=args.start, deadline=deadline)
-    print(f"Added project {project_id}: {name}")
-    maybe_export(args, con)
+        project_id = writes.add_project(con, name, description=args.description,
+                                        start_date=args.start, deadline=deadline)
+        print(f"Added project {project_id}: {name}")
+        maybe_export(args, con)
 
 def ask_yes_no(question, default=False):
     """Prompt for yes or no. Blank input returns the default."""
@@ -199,41 +199,41 @@ def cmd_log(args):
 
 def cmd_done(args):
     completed_at = completion_timestamp(args.date)
-    con = db.connect(args.db)
-    task = reads.get_task(con, args.task_id)
-    if task is None:
-        raise ValueError(f"No task with id {args.task_id}.")
-    if task["status"] != "open":
-        raise ValueError(f"Task {args.task_id} is already {task['status']}.")
+    with closing(db.connect(args.db)) as con:
+        task = reads.get_task(con, args.task_id)
+        if task is None:
+            raise ValueError(f"No task with id {args.task_id}.")
+        if task["status"] != "open":
+            raise ValueError(f"Task {args.task_id} is already {task['status']}.")
 
-    guided = (args.outcome is None and args.measure is None
-              and args.quantity is None and not args.flag and args.measurement_status is None)
+        guided = (args.outcome is None and args.measure is None
+                  and args.quantity is None and not args.flag and args.measurement_status is None)
 
-    print(f"Task {task['id']}: {task['title']}  [{task['category']}]")
+        print(f"Task {task['id']}: {task['title']}  [{task['category']}]")
 
-    outcome = args.outcome
-    measure = args.measure
-    quantity = args.quantity
-    flagged = args.flag
-    duty = args.duty
+        outcome = args.outcome
+        measure = args.measure
+        quantity = args.quantity
+        flagged = args.flag
+        duty = args.duty
 
-    if guided:
-        outcome = ask("Outcome")
-        measure, quantity = ask_measure(con)
-        if duty is None and task["duty"] is None:
-            duty = ask_duty(con, task["category"])
-        flagged = ask_yes_no("Review material?")
+        if guided:
+            outcome = ask("Outcome")
+            measure, quantity = ask_measure(con)
+            if duty is None and task["duty"] is None:
+                duty = ask_duty(con, task["category"])
+            flagged = ask_yes_no("Review material?")
 
-    completion_id = writes.complete_task(
-        con, task["id"], outcome=outcome, measure=measure,
-        quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at,
-        measurement_status=args.measurement_status, remind_on=args.remind_on)
-    print(f"Logged completion {completion_id}.")
-    if task["recurrence_id"] is not None:
-        following = reads.open_occurrence(con, task["recurrence_id"])
-        if following is not None:
-            print(f"Next task {following['id']}: due {following['due_date']} (series {task['recurrence_id']}).")
-    maybe_export(args, con)
+        completion_id = writes.complete_task(
+            con, task["id"], outcome=outcome, measure=measure,
+            quantity=quantity, flagged=flagged, duty=duty, completed_at=completed_at,
+            measurement_status=args.measurement_status, remind_on=args.remind_on)
+        print(f"Logged completion {completion_id}.")
+        if task["recurrence_id"] is not None:
+            following = reads.open_occurrence(con, task["recurrence_id"])
+            if following is not None:
+                print(f"Next task {following['id']}: due {following['due_date']} (series {task['recurrence_id']}).")
+        maybe_export(args, con)
 
 def fmt_number(value):
     """Render a quantity: no trailing .0 when whole, thousands separated."""
@@ -291,26 +291,26 @@ def plural(count, word):
     return word if count == 1 else word + "s"
 
 def cmd_measure(args):
-    con = db.connect(args.db)
+    with closing(db.connect(args.db)) as con:
 
-    if args.name:
-        writes.add_measure(con, args.name)
-        print(f"Registered {args.name}.")
-        return
+        if args.name:
+            writes.add_measure(con, args.name)
+            print(f"Registered {args.name}.")
+            return
 
-    rows = reads.measure_usage(con)
-    if not rows:
-        print('No measures registered. Add one with: saga measure "NAME"')
-        return
+        rows = reads.measure_usage(con)
+        if not rows:
+            print('No measures registered. Add one with: saga measure "NAME"')
+            return
 
-    print(f"MEASURES ({len(rows)})")
-    for row in rows:
-        if row["occasions"] == 0:
-            print(f"  {row['name']:<34}{'-':>7}   never used")
-            continue
-        print(f"  {row['name']:<34}{fmt_number(row['total']):>7}"
-              f"   across {row['occasions']} "
-              f"{plural(row['occasions'], 'occasion')}")
+        print(f"MEASURES ({len(rows)})")
+        for row in rows:
+            if row["occasions"] == 0:
+                print(f"  {row['name']:<34}{'-':>7}   never used")
+                continue
+            print(f"  {row['name']:<34}{fmt_number(row['total']):>7}"
+                  f"   across {row['occasions']} "
+                  f"{plural(row['occasions'], 'occasion')}")
 
 
 def cmd_duty(args):
@@ -499,46 +499,46 @@ def cmd_reschedule_followup(args):
 
 
 def cmd_today(args):
-    con = db.connect(args.db)
-    show_followups(con, due_only=True)
-    late = reads.overdue(con)
-    due = reads.due_today(con)
-    soon = reads.due_soon(con, days=args.days)
+    with closing(db.connect(args.db)) as con:
+        show_followups(con, due_only=True)
+        late = reads.overdue(con)
+        due = reads.due_today(con)
+        soon = reads.due_soon(con, days=args.days)
 
-    if late:
-        print("OVERDUE")
-        print_tasks(late, mode="late")
-        print()
-    if due:
-        print("DUE TODAY")
-        print_tasks(due)
-        print()
-    if soon:
-        print(f"COMING UP ({args.days} DAYS)")
-        print_tasks(soon, mode="soon")
-        print()
-    if not (late or due or soon):
-        print(f"No open tasks due in the next {args.days} days.")
+        if late:
+            print("OVERDUE")
+            print_tasks(late, mode="late")
+            print()
+        if due:
+            print("DUE TODAY")
+            print_tasks(due)
+            print()
+        if soon:
+            print(f"COMING UP ({args.days} DAYS)")
+            print_tasks(soon, mode="soon")
+            print()
+        if not (late or due or soon):
+            print(f"No open tasks due in the next {args.days} days.")
 
 def cmd_list(args):
-    con = db.connect(args.db)
-    rows = reads.open_tasks(con, category=args.category)
-    if not rows:
-        print("No open tasks.")
-        return
-    print(f"OPEN TASKS ({len(rows)})")
-    print_tasks(rows, mode="date")
+    with closing(db.connect(args.db)) as con:
+        rows = reads.open_tasks(con, category=args.category)
+        if not rows:
+            print("No open tasks.")
+            return
+        print(f"OPEN TASKS ({len(rows)})")
+        print_tasks(rows, mode="date")
 
 def cmd_upcoming(args):
-    con = db.connect(args.db)
-    rows = reads.upcoming_deadlines(con, days=args.days)
-    if not rows:
-        print(f"No deadlines inside {args.days} days.")
-        return
-    print(f"DEADLINES WITHIN {args.days} DAYS")
-    for row in rows:
-        print(f"  {row['days_left']:>4}d  {row['deadline']}  "
-              f"{row['name']:<38}{row['open_tasks']} open")
+    with closing(db.connect(args.db)) as con:
+        rows = reads.upcoming_deadlines(con, days=args.days)
+        if not rows:
+            print(f"No deadlines inside {args.days} days.")
+            return
+        print(f"DEADLINES WITHIN {args.days} DAYS")
+        for row in rows:
+            print(f"  {row['days_left']:>4}d  {row['deadline']}  "
+                  f"{row['name']:<38}{row['open_tasks']} open")
 
 def cmd_cancel(args):
     with closing(db.connect(args.db)) as con:
