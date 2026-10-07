@@ -1,2 +1,2 @@
 # Development only; Saga has no third-party runtime dependencies.
-ruff==0.16.9
+ruff==0.16.10
