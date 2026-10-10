@@ -29,3 +29,30 @@ jobs:
         run: python -B -m unittest discover -s tests -v
       - name: Run Ruff
         run: python -m ruff check --no-cache .
+
+  desktop:
+    name: Desktop (Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.14', '3.15']
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          check-latest: true
+      - name: Install desktop and development tools
+        run: python -m pip install -r requirements-dev.txt -r requirements-desktop.txt
+      - name: Run core and desktop tests
+        run: python -B -m unittest discover -s tests -v
+      - name: Run Ruff
+        run: python -m ruff check --no-cache .
