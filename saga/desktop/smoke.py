@@ -1,0 +1,103 @@
+"""Disposable end-to-end check for the packaged desktop executable."""
+
+import json
+import platform
+import sys
+import tempfile
+from contextlib import closing
+from pathlib import Path
+
+from PySide6.QtCore import QStandardPaths, qVersion
+
+from saga import db, export
+from saga.application import ArchiveService, create_archive
+from saga.desktop.settings import SettingsStore
+from saga.desktop.window import MainWindow
+
+
+def run_smoke(app, report_path):
+    """Exercise bundled resources, archive operations, and Qt without real data."""
+    QStandardPaths.setTestModeEnabled(True)
+    report = {
+        "success": False,
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "runtime": {"python": platform.python_version(), "qt": qVersion(),
+                    "platform": platform.platform()},
+        "checks": {},
+    }
+    step = "initialization"
+    window = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="saga-smoke-") as temporary:
+            root = Path(temporary)
+            step = "migration_resources"
+            migrations = sorted(db.MIGRATIONS_PATH.glob("*.sql"))
+            numbers = [int(path.name.split("_", 1)[0]) for path in migrations]
+            if numbers != list(range(1, db.SCHEMA_VERSION + 1)) or any(
+                    not path.read_text(encoding="utf-8").strip() for path in migrations):
+                raise RuntimeError("Bundled SQL migrations are missing or empty")
+            report["checks"][step] = True
+
+            step = "schema_and_archive"
+            database = create_archive(root / "archive.db")
+            service = ArchiveService(database, root / "exports")
+            service.validate_archive()
+            with closing(db.connect(database)) as con:
+                if db.schema_version(con) != db.SCHEMA_VERSION:
+                    raise RuntimeError("New archive has an unexpected schema version")
+            report["checks"][step] = True
+
+            step = "capture_and_export"
+            result = service.save_capture({
+                "category": "work", "outcome": "Invented smoke check outcome",
+                "completed_date": None, "duty": None, "new_duty": None,
+                "measurement_status": "unknown", "measure": None,
+                "new_measure": None, "quantity": None,
+                "remind_on": service.today()["date"], "flagged": False,
+            })
+            if result.export_error or result.completion_id < 1:
+                raise RuntimeError(f"Capture or export failed: {result.export_error}")
+            if not (root / "exports" / "manifest.json").is_file() or export.is_stale(root / "exports"):
+                raise RuntimeError("The exported snapshot is missing or stale")
+            if len(service.today()["followups"]) != 1:
+                raise RuntimeError("Saved capture was not visible in Today")
+            report["checks"][step] = True
+
+            step = "settings_roundtrip"
+            store = SettingsStore(root / "settings" / "settings.json")
+            store.select(database, root / "exports")
+            reopened = SettingsStore(store.path)
+            if reopened.load()["database"] != str(database.resolve()) or reopened.export_for(database) != root / "exports":
+                raise RuntimeError("Selected archive and export folder did not persist")
+            report["checks"][step] = True
+
+            step = "main_window"
+            window = MainWindow(reopened)
+            window.show()
+            app.processEvents()
+            if (window.service is None or window.service.database != database.resolve()
+                    or window.capture is None
+                    or window.sections["followups"].table.rowCount() != 1):
+                raise RuntimeError("Main window did not load the disposable archive")
+            if not window.close():
+                raise RuntimeError("Main window refused to close")
+            app.processEvents()
+            window = None
+            report["checks"][step] = True
+        report["success"] = True
+    except Exception as exc:  # noqa: BLE001 - every smoke failure must produce a JSON report
+        report["checks"][step] = False
+        report["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        if window is not None:
+            window.close()
+            app.processEvents()
+
+    try:
+        destination = Path(report_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"Could not write smoke report at {report_path}: {exc}", file=sys.stderr)
+        return 1
+    return 0 if report["success"] else 1

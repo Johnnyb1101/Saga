@@ -198,11 +198,40 @@ different folder for a demo or recovered archive. If export fails after saving,
 the accomplishment is already recorded: use **Retry export** rather than
 recording it again. Exports can also be disabled.
 
-This is a development preview, not a packaged installer. It makes no AI calls;
+The desktop makes no AI calls;
 provider setup and assistant chat are later milestones. PySide6 is optional for
 CLI use. Python 3.14 is the initial desktop runtime; a separate CI job checks
 Python 3.15 compatibility. Passing those tests does not verify installer
 packaging. Distribution must include the appropriate Qt license notices.
+
+### Standalone Windows installation
+
+The Windows build includes Python and Qt, so the installed app can run without
+the checkout or a separately installed Python. Build it on Windows with Python
+3.14. These build tools are optional and separate from the CLI environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m venv .build-venv
+.\.build-venv\Scripts\python.exe -m pip install -r requirements-build.txt -r requirements-desktop.txt
+.\scripts\build-windows.ps1
+.\scripts\install-windows.ps1 -Launch
+```
+
+The build produces `dist\Saga\Saga.exe` and its supporting files. Keep the whole
+`Saga` folder together. The install script copies it into a new version folder
+under `%LOCALAPPDATA%\Programs\Saga`, checks that copy, and creates desktop and
+Start menu shortcuts. It leaves previous versions available. This is a local,
+unsigned installation; publishing and signing an installer are separate work.
+
+Both scripts run `Saga.exe --smoke-test REPORT_PATH` from outside the checkout.
+This check uses invented records in a temporary archive and writes a JSON
+report. It checks bundled resources, saving, exports, settings, and the window.
+The install script only updates shortcuts after the installed copy passes.
+
+The installed app uses the same saved archive selection and settings as the
+desktop preview. Installation does not move your records: if your selected
+archive is still inside the checkout, keep that archive and its export folder.
+The app itself no longer needs the source files or `.venv` to run.
 
 ## Usage
 

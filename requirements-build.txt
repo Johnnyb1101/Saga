@@ -1,0 +1,2 @@
+# Optional Windows packaging tools; never needed to run the installed app.
+PyInstaller==6.22.3
