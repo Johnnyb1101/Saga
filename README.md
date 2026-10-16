@@ -207,9 +207,13 @@ Run `python main.py --db "PATH_TO_YOUR_ARCHIVE" migrate` using Python 3.15
 from this checkout. Migration creates a backup before updating the archive.
 The desktop reports older archives rather than upgrading them automatically.
 
-**Add Task** creates future work with an optional due date. Check **I’ve already
-finished this** to record completed work that was not already tracked, with a
-completion date of today or earlier. Switching the checkbox keeps both drafts.
+**Add Task** uses one form for future work and work already finished. Enter the
+task, category and optional role once. At the bottom, check **I’ve already
+finished this** to expand completion details in place: the completion date,
+optional result details, numbers and review flag. The task text becomes the
+completion description; any result details are added to it. Checking or
+unchecking keeps all your entries. Scheduling controls are inactive while
+recording completed work. Preview and save use the same buttons in either case.
 Both completion routes ask **Can you put a number to this?** Choose **Yes** to
 enter an amount and what you counted, **No number needed**, or **I’ll add a
 number later** with a reminder date. Relevant fields appear only when needed.
@@ -291,7 +295,7 @@ In **Settings**, choose **System**, **Light**, or **Dark** appearance and a
 and are saved locally without changing your archive selection or unsaved drafts.
 System appearance follows Windows; the accent remains your chosen color.
 
-Both **Add Task** forms use **Choose category** with **Create category** and
+**Add Task** uses **Choose category** with **Create category** and
 **Manage categories**. Create your own categories and choose whether their new
 accomplishments count toward reviews. Unused categories can be deleted;
 categories linked to records can be archived instead. Archiving removes a
