@@ -86,6 +86,12 @@ class TaskWidget(QWidget):
         self.repeat_second_day.setAccessibleName('Second day of the month')
         self.schedule_help = QLabel()
         self.schedule_help.setWordWrap(True)
+        self.has_end_date = QCheckBox('End on')
+        self.end_date = QDateEdit(QDate.currentDate())
+        self.end_date.setCalendarPopup(True)
+        self.end_date.setDisplayFormat('yyyy-MM-dd')
+        self.end_date.setAccessibleName('Recurring schedule end date (inclusive)')
+        self.end_date.setEnabled(False)
 
         form = QFormLayout()
         form.addRow("Task", self.title)
@@ -105,6 +111,8 @@ class TaskWidget(QWidget):
         form.addRow('Day of the month', self.repeat_month_day)
         form.addRow('Second day of the month', self.repeat_second_day)
         form.addRow(self.schedule_help)
+        form.addRow(self.has_end_date)
+        form.addRow('Last allowed due date', self.end_date)
         self.already_finished = QCheckBox("I’ve already finished this")
         self.already_finished.setAccessibleName("I’ve already finished this")
         form.addRow(self.already_finished)
@@ -115,6 +123,8 @@ class TaskWidget(QWidget):
         form.setRowVisible(self.repeat_interval, False)
         for field in (self.repeat_weekday, self.repeat_month_day, self.repeat_second_day, self.schedule_help):
             form.setRowVisible(field, False)
+        form.setRowVisible(self.has_end_date, False)
+        form.setRowVisible(self.end_date, False)
         self.form_layout = form
         self.form_group = QGroupBox("Something to do")
         self.form_group.setLayout(form)
@@ -175,6 +185,8 @@ class TaskWidget(QWidget):
         self.repeat_weekday.currentIndexChanged.connect(self._mark_dirty)
         self.repeat_month_day.valueChanged.connect(self._mark_dirty)
         self.repeat_second_day.valueChanged.connect(self._mark_dirty)
+        self.has_end_date.toggled.connect(self._end_date_changed)
+        self.end_date.dateChanged.connect(self._mark_dirty)
         self.already_finished.toggled.connect(self._finished_changed)
         self.completion_details.changed.connect(self._mark_dirty)
         self.reload_references()
@@ -194,18 +206,25 @@ class TaskWidget(QWidget):
         self.title.setAccessibleName("What did you finish?" if finished else "Task title")
         for field in (self.has_due_date, self.due_date, self.repeat_task, self.repeat_frequency,
                       self.repeat_interval, self.repeat_weekday, self.repeat_month_day,
-                      self.repeat_second_day):
+                      self.repeat_second_day, self.has_end_date, self.end_date):
             field.setEnabled(False if finished else self._schedule_field_enabled(field))
         self.form_group.setTitle("Something finished" if finished else "Something to do")
         self.save_button.setText("Save accomplishment" if finished else "Save task")
         self._mark_dirty()
 
     def _schedule_field_enabled(self, field):
+        if field is self.end_date:
+            return self.has_end_date.isChecked()
         if field is self.has_due_date:
             return not self.repeat_task.isChecked()
         if field is self.due_date:
             return self.has_due_date.isChecked()
         return True
+
+    def _end_date_changed(self, checked):
+        self.end_date.setEnabled(checked and not self.already_finished.isChecked())
+        self.form_layout.setRowVisible(self.end_date, checked and self.repeat_task.isChecked())
+        self._mark_dirty()
 
     def reload_references(self):
         refs = self.service.references()
@@ -276,6 +295,8 @@ class TaskWidget(QWidget):
         self.form_layout.setRowVisible(self.repeat_month_day, checked and monthly)
         self.form_layout.setRowVisible(self.repeat_second_day, checked and frequency == 'twice_monthly')
         self.form_layout.setRowVisible(self.schedule_help, checked)
+        self.form_layout.setRowVisible(self.has_end_date, checked)
+        self.form_layout.setRowVisible(self.end_date, checked and self.has_end_date.isChecked())
         self.form_layout.labelForField(self.due_date).setText('Start on or after' if checked else 'Choose date')
         self.schedule_help.setText(
             'The first due date will be the first selected day on or after your start date.'
@@ -314,6 +335,8 @@ class TaskWidget(QWidget):
                 draft['month_day'] = self.repeat_month_day.value()
                 if frequency == 'twice_monthly':
                     draft['second_month_day'] = self.repeat_second_day.value()
+            if self.has_end_date.isChecked():
+                draft['end_date'] = self.end_date.date().toString('yyyy-MM-dd')
         return draft
 
     def show_preview(self):
@@ -360,9 +383,12 @@ class TaskWidget(QWidget):
         self.preview_text.setPlainText("\n".join(f"{label}: {value}" for label, value in details))
         if not finished and draft.get('repeat'):
             description = schedule_description(draft['repeat'], draft['interval'], values['due_date'],
-                                               values.get('month_day'), values.get('second_month_day'))
+                                               values.get('month_day'), values.get('second_month_day'),
+                                               values.get('end_date'))
             self.preview_text.appendPlainText(f'Repeat: {description}')
-            self.preview_text.appendPlainText('Completing this task creates the next occurrence.')
+            self.preview_text.appendPlainText(
+                'Occurrences due on the end date are included; no later occurrences will be created.'
+                if values.get('end_date') else 'Completing this task creates the next occurrence.')
         self.form_group.setEnabled(False)
         self.form_group.hide()
         self.preview_button.hide()
@@ -464,6 +490,8 @@ class TaskWidget(QWidget):
         self.repeat_weekday.setCurrentIndex(QDate.currentDate().dayOfWeek() - 1)
         self.repeat_month_day.setValue(QDate.currentDate().day())
         self.repeat_second_day.setValue(15)
+        self.has_end_date.setChecked(False)
+        self.end_date.setDate(QDate.currentDate())
         self.has_due_date.setChecked(False)
         self.due_date.setDate(QDate.currentDate())
         self._finished_changed(False)

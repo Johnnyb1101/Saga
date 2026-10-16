@@ -96,7 +96,8 @@ def _ordinal(day):
     return f'{day}{suffix}'
 
 
-def schedule_description(frequency, interval, anchor_date, month_day=None, second_month_day=None):
+def schedule_description(frequency, interval, anchor_date, month_day=None,
+                         second_month_day=None, end_date=None):
     """Describe a persisted schedule or a normalized task preview."""
     if frequency == 'monthly' and second_month_day is not None:
         schedule = ('Twice a month' if interval == 1
@@ -107,12 +108,14 @@ def schedule_description(frequency, interval, anchor_date, month_day=None, secon
         unit = {'daily': 'days', 'weekly': 'weeks', 'monthly': 'months'}[frequency]
         schedule = f'Every {interval} {unit}'
     if frequency == 'weekly' and anchor_date is not None:
-        return f'{schedule} on {dt.date.fromisoformat(anchor_date):%A}'
-    if frequency == 'monthly' and month_day is not None:
+        schedule += f' on {dt.date.fromisoformat(anchor_date):%A}'
+    elif frequency == 'monthly' and month_day is not None:
         days = f'the {_ordinal(month_day)}'
         if second_month_day is not None:
             days += f' and {_ordinal(second_month_day)}'
-        return f'{schedule} on {days}'
+        schedule += f' on {days}'
+    if end_date is not None:
+        schedule += f', ends {end_date}'
     return schedule
 
 
@@ -121,7 +124,7 @@ def _repeat_label(series):
         return None
     schedule = schedule_description(series['frequency'], series['interval'],
                                     series['anchor_date'], series['month_day'],
-                                    series['second_month_day'])
+                                    series['second_month_day'], series['end_date'])
     return schedule if series['status'] == 'active' else f'Stopped: {schedule}'
 
 
@@ -164,7 +167,7 @@ class ArchiveService:
             open_tasks = [dict(row) for row in reads.open_tasks(con)]
             series = {row['id']: row for row in con.execute(
                 'SELECT id, frequency, interval, anchor_date, month_day, '
-                'second_month_day, status FROM recurrences')}
+                'second_month_day, end_date, status FROM recurrences')}
 
             def labeled(rows):
                 return [{**dict(row), 'repeat_label': _repeat_label(
@@ -246,6 +249,16 @@ class ArchiveService:
             if parsed.isoformat() != due_date:
                 raise ValueError("Due date must use YYYY-MM-DD")
         repeat = draft.get('repeat')
+        end_date = draft.get('end_date')
+        if end_date is not None:
+            if not isinstance(end_date, str):
+                raise ValueError('End date must use YYYY-MM-DD')
+            try:
+                parsed_end = dt.date.fromisoformat(end_date)
+            except ValueError:
+                raise ValueError('End date must use YYYY-MM-DD') from None
+            if parsed_end.isoformat() != end_date:
+                raise ValueError('End date must use YYYY-MM-DD')
         interval = draft.get('interval', 1)
         weekday = draft.get('weekday')
         month_day = draft.get('month_day')
@@ -256,6 +269,8 @@ class ArchiveService:
             if value is not None and (type(value) is not int or not 1 <= value <= 31):
                 raise ValueError(f'{name} must be a number from 1 to 31')
         if repeat is None:
+            if end_date is not None:
+                raise ValueError('End date requires a repeat schedule')
             if interval != 1 or type(interval) is not int:
                 raise ValueError("Interval requires a repeat schedule")
             if any(value is not None for value in (weekday, month_day, second_month_day)):
@@ -289,6 +304,8 @@ class ArchiveService:
             elif any(value is not None for value in (weekday, month_day, second_month_day)):
                 raise ValueError('Schedule selectors require weekly or monthly repeat')
             occurrence_date(due_date, repeat, interval, 0, month_day, second_month_day)
+            if end_date is not None and end_date < due_date:
+                raise ValueError('End date must be on or after the first due date')
         with closing(db.connect(self.database)) as con:
             if category not in [row['name'] for row in reads.categories(con, active_only=True)]:
                 raise ValueError(f"Unknown category: {category}")
@@ -300,6 +317,8 @@ class ArchiveService:
         }
         if repeat is not None:
             prepared['values'].update(repeat=repeat, interval=interval)
+            if end_date is not None:
+                prepared['values']['end_date'] = end_date
             if month_day is not None:
                 prepared['values'].update(month_day=month_day,
                                           second_month_day=second_month_day)

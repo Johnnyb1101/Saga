@@ -6,6 +6,10 @@ import math
 from bisect import bisect_right
 
 
+class RecurrenceDateOverflow(ValueError):
+    """A valid forward schedule has advanced beyond Python's date range."""
+
+
 def occurrence_date(anchor_date, frequency, interval, occurrence,
                     month_day=None, second_month_day=None):
     """Return the date of a zero-based occurrence without month-end drift."""
@@ -44,7 +48,7 @@ def occurrence_date(anchor_date, frequency, interval, occurrence,
         days = offset * (7 if frequency == "weekly" else 1)
         return (anchor + dt.timedelta(days=days)).isoformat()
     except (ValueError, OverflowError):
-        raise ValueError("next recurrence exceeds the supported date range; stop the series before completing") from None
+        raise RecurrenceDateOverflow("next recurrence exceeds the supported date range; stop the series before completing") from None
 
 
 def _month_days(year, month, first, second):

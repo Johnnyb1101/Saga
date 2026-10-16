@@ -136,7 +136,7 @@ For an **existing** database after updating the code:
 ```
 
 Do not run `init` to upgrade: it refuses an existing file. The current database
-schema is version 7. Migration saves a local backup before pending changes
+schema is version 8. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
@@ -198,11 +198,16 @@ that date. Short months use the last day, then return to your chosen date.
 If both monthly dates fall on the same last day, only one occurrence is created.
 Completing an occurrence creates the next task on the original schedule.
 Today cards show the schedule. Existing schedules keep their original dates.
+Optionally check **End on** and choose the last allowed due date. Occurrences
+due on that date are included; no later occurrences are created. The end date
+must be on or after the first scheduled due date. Existing open tasks can still
+be completed after the cutoff. Leaving **End on** unchecked keeps the schedule
+running until you stop it. Existing schedules have no end date after upgrading.
 To end it, open the task and choose **Stop repeating permanently**. The confirmation
 explains that the current task is cancelled, no future tasks will be created,
 and previous accomplishments remain saved. **Keep task** leaves it unchanged.
 
-Existing archives need the schema 7 upgrade before this version can open them.
+Existing archives need the schema 8 upgrade before this version can open them.
 Run `python main.py --db "PATH_TO_YOUR_ARCHIVE" migrate` using Python 3.15
 from this checkout. Migration creates a backup before updating the archive.
 The desktop reports older archives rather than upgrading them automatically.

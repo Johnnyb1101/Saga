@@ -83,7 +83,11 @@ CREATE TABLE recurrences (
     month_day INTEGER CHECK (month_day IS NULL OR (frequency = 'monthly' AND month_day BETWEEN 1 AND 31)),
     second_month_day INTEGER CHECK (second_month_day IS NULL OR
         (frequency = 'monthly' AND month_day IS NOT NULL AND second_month_day BETWEEN 1 AND 31
-         AND second_month_day > month_day))
+         AND second_month_day > month_day)),
+    end_date TEXT CHECK (end_date IS NULL OR
+        (length(end_date) = 10 AND end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+         AND end_date >= '0001-01-01' AND date(end_date, '+0 days') IS end_date
+         AND end_date >= anchor_date))
 ) STRICT;
 
 -- ---------------------------------------------------------------------
@@ -196,4 +200,4 @@ CREATE TABLE measurement_followups (
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 ) STRICT;
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;

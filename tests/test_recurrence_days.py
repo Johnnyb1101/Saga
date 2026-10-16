@@ -136,7 +136,7 @@ class SelectedDaysMigrationTests(unittest.TestCase):
             db.migrate(path)
             with contextlib.closing(db.connect(path)) as con:
                 self.assertEqual([tuple(row) for row in con.execute('SELECT * FROM recurrences')],
-                                 [row + (None, None) for row in rows['recurrences']])
+                                 [row + (None, None, None) for row in rows['recurrences']])
                 for table in ('tasks', 'completions'):
                     self.assertEqual([tuple(row) for row in con.execute('SELECT * FROM ' + table)], rows[table])
                 writes.complete_task(con, 1)
