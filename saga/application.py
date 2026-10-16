@@ -217,6 +217,39 @@ class ArchiveService:
                 raise ValueError("Choose an open task to complete")
             return dict(task)
 
+    def preview_due_date(self, expected_task, due_date):
+        """Validate a new due date against a full, current open-task snapshot."""
+        if due_date is not None:
+            try:
+                parsed = dt.date.fromisoformat(due_date)
+            except (TypeError, ValueError):
+                raise ValueError("Due date must use YYYY-MM-DD") from None
+            if parsed.isoformat() != due_date:
+                raise ValueError("Due date must use YYYY-MM-DD")
+        with closing(db.connect(self.database)) as con:
+            task = reads.get_task(con, expected_task['id'])
+            if task is None or dict(task) != expected_task or task['status'] != 'open':
+                raise ValueError("This task changed. Select it again")
+        return due_date
+
+    def save_due_date(self, expected_task, due_date):
+        """Change one open occurrence and report any post-commit export failure."""
+        normalized = self.preview_due_date(expected_task, due_date)
+        with closing(db.connect(self.database)) as con:
+            con.execute('BEGIN IMMEDIATE')
+            with con:
+                task = reads.get_task(con, expected_task['id'])
+                if task is None or dict(task) != expected_task or task['status'] != 'open':
+                    raise ValueError("This task changed. Select it again")
+                writes.reschedule_task(con, expected_task['id'], normalized)
+            export_error = None
+            if self.export_dir is not None:
+                try:
+                    export.write_all(con, self.export_dir)
+                except (export.ExportError, sqlite3.Error, OSError) as exc:
+                    export_error = str(exc)
+            return TaskSaveResult(expected_task['id'], export_error)
+
     def preview_completion(self, expected_task, draft):
         """Normalize a task completion without writing or changing task context."""
         with closing(db.connect(self.database)) as con:

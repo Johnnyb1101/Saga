@@ -183,6 +183,11 @@ details and **Mark complete**, including overdue, future, and undated tasks.
 The completion preserves the task's category, role, title, project and due date.
 Review the result before confirming; Today refreshes after completion.
 
+Choose **Change due date** in an open task's details to set a different date
+or uncheck **Set a due date** to remove it. Preview the old and new dates before
+saving. For recurring tasks, this changes only the current occurrence; future
+dates keep the original schedule. Today refreshes after you return from saving.
+
 **Add Task** creates future work with an optional due date. Check **I’ve already
 finished this** to record completed work that was not already tracked, with a
 completion date of today or earlier. Switching the checkbox keeps both drafts.
