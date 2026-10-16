@@ -1,33 +1,34 @@
 """First-launch archive selection and the read-only Today desktop view."""
 
+import datetime as dt
 import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView,
+    QApplication,
     QDialog,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from saga.application import ArchiveService, create_archive
-from saga.desktop.capture import CaptureWidget
+from saga.desktop.appearance import DESKTOP_STYLE, app_icon, heading
 from saga.desktop.settings import SettingsStore, default_database
+from saga.desktop.task_entry import AddTaskWidget
+from saga.desktop.themes import ThemePicker, apply_theme
 
 
 def _plain_label(text=""):
@@ -38,49 +39,87 @@ def _plain_label(text=""):
 
 
 class TodaySection(QGroupBox):
-    """A read-only table with an explicit empty state."""
+    """Compact read-only cards that grow with their text."""
 
     def __init__(self, title, fields, parent=None):
         super().__init__(title, parent)
         self.fields = fields
-        layout = QVBoxLayout(self)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.card_layout = QVBoxLayout(self)
+        self.card_layout.setSpacing(8)
         self.empty = _plain_label("Nothing here.")
-        self.table = QTableWidget(0, len(fields))
-        self.table.setHorizontalHeaderLabels([label for label, _ in fields])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setAccessibleName(title)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.empty)
-        layout.addWidget(self.table)
-        self.table.hide()
+        self.card_layout.addWidget(self.empty)
+        self.cards = []
+        self.setAccessibleName(title)
 
     def show_rows(self, rows):
-        self.table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            for col_index, (_, key) in enumerate(self.fields):
+        for card in self.cards:
+            self.card_layout.removeWidget(card)
+            card.hide()
+            card.deleteLater()
+        self.cards = []
+        for row in rows:
+            card = QWidget()
+            card.setObjectName('taskCard')
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+            layout = QVBoxLayout(card)
+            layout.setContentsMargins(14, 10, 14, 10)
+            layout.setSpacing(4)
+            title = str(row.get('title') or row.get('outcome') or 'Untitled task')
+            card.title_label = _plain_label(title)
+            card.title_label.setObjectName('cardTitle')
+            heading(card.title_label, 1)
+            card.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            details = []
+            for label, key in self.fields:
                 value = row.get(key)
-                item = QTableWidgetItem("" if value is None else str(value))
-                self.table.setItem(row_index, col_index, item)
+                if key in ('title', 'outcome') or value is None or value == '':
+                    continue
+                if key in ('due_date', 'remind_on'):
+                    try:
+                        date = dt.date.fromisoformat(value)
+                        value = f'{date.strftime("%b")} {date.day}, {date.year}'
+                    except (TypeError, ValueError):
+                        pass  # Preserve unexpected historical text rather than hide it.
+                    details.append(f'{label} {value}')
+                else:
+                    details.append(f'{label}: {value}')
+            card.details_label = _plain_label(' · '.join(details))
+            card.details_label.setParent(card)
+            card.details_label.setObjectName('cardDetails')
+            card.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            card.setAccessibleName(title)
+            card.setAccessibleDescription(card.details_label.text())
+            layout.addWidget(card.title_label)
+            if details:
+                layout.addWidget(card.details_label)
+            self.card_layout.addWidget(card)
+            self.cards.append(card)
         self.empty.setVisible(not rows)
-        self.table.setVisible(bool(rows))
 
 
 class MainWindow(QMainWindow):
     def __init__(self, settings_store=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Saga")
+        self.setWindowIcon(app_icon())
+        self.setStyleSheet(DESKTOP_STYLE)
         self.resize(940, 720)
         self.settings_store = settings_store or SettingsStore()
+        self.theme = {'mode': 'system', 'accent': 'teal'}
+        apply_theme(self, **self.theme)
+        QApplication.instance().styleHints().colorSchemeChanged.connect(self._system_theme_changed)
         self.service = None
         self.capture = None
+        self.entry = None
         self.pages = QStackedWidget()
         self.setCentralWidget(self.pages)
         self._build_setup()
         self._build_archive_page()
         self.pages.setCurrentWidget(self.setup_page)
         try:
+            self.theme = self.settings_store.theme()
+            apply_theme(self, **self.theme)
             selected = self.settings_store.load()["database"]
             if selected:
                 self._activate_archive(Path(selected), persist=False)
@@ -92,6 +131,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(self.setup_page)
         title = _plain_label("Choose your Saga archive")
         title.setObjectName("setupTitle")
+        heading(title, 5)
         layout.addWidget(title)
         layout.addWidget(_plain_label(
             "Create a local archive or open an existing Saga database. "
@@ -111,6 +151,9 @@ class MainWindow(QMainWindow):
         open_existing.clicked.connect(self._browse_existing)
         layout.addWidget(create)
         layout.addWidget(open_existing)
+        settings_button = QPushButton('Appearance settings')
+        settings_button.clicked.connect(self.show_settings)
+        layout.addWidget(settings_button)
         self.setup_error = _plain_label()
         self.setup_error.setObjectName("setupError")
         layout.addWidget(self.setup_error)
@@ -133,6 +176,7 @@ class MainWindow(QMainWindow):
         today_layout = QVBoxLayout(self.today_page)
         toolbar = QHBoxLayout()
         self.date_label = _plain_label()
+        heading(self.date_label, 5)
         toolbar.addWidget(self.date_label, 1)
         refresh_button = QPushButton("Refresh Today")
         refresh_button.clicked.connect(self.refresh_today)
@@ -149,6 +193,8 @@ class MainWindow(QMainWindow):
             "overdue": TodaySection("Overdue", (("Due", "due_date"), ("Task", "title"), ("Category", "category"), ("Role", "duty"))),
             "due_today": TodaySection("Due today", (("Task", "title"), ("Category", "category"), ("Role", "duty"))),
             "due_soon": TodaySection("Upcoming", (("Due", "due_date"), ("Task", "title"), ("Category", "category"), ("Role", "duty"))),
+            "later": TodaySection("Later", (("Due", "due_date"), ("Task", "title"), ("Category", "category"), ("Role", "duty"))),
+            "undated": TodaySection("No due date", (("Task", "title"), ("Category", "category"), ("Role", "duty"))),
             "followups": TodaySection("Due measurement follow-ups", (("Remind on", "remind_on"), ("Outcome", "outcome"), ("Category", "category"), ("Role", "duty"))),
         }
         for section in self.sections.values():
@@ -191,7 +237,7 @@ class MainWindow(QMainWindow):
 
     def open_archive(self, path):
         """Validate before remembering the selection; exports remain opt-in."""
-        if self.capture is not None and not self.capture.confirm_discard():
+        if self.entry is not None and not self.entry.confirm_discard():
             return
         try:
             self._activate_archive(path, export_dir=self.settings_store.export_for(path))
@@ -212,16 +258,18 @@ class MainWindow(QMainWindow):
         if persist:
             self.settings_store.select(database, export_dir)
         self.service = service
-        if self.capture is not None:
-            index = self.tabs.indexOf(self.capture)
+        if self.entry is not None:
+            index = self.tabs.indexOf(self.entry)
             self.tabs.removeTab(index)
-            self.capture.deleteLater()
-        self.capture = CaptureWidget(service)
+            self.entry.deleteLater()
+        self.entry = AddTaskWidget(service)
+        self.capture = self.entry.completed
         # Reference lookup above exposes startup errors before changing the page.
         if not references["categories"]:
-            self.capture.status.setText("This archive has no categories available for capture.")
-        self.capture.saved.connect(self.refresh_today)
-        self.tabs.addTab(self.capture, "Capture")
+            for form in (self.entry.task, self.entry.completed):
+                form.status.setText("This archive has no categories available for new entries.")
+        self.entry.saved.connect(self.refresh_today)
+        self.tabs.addTab(self.entry, "Add Task")
         self.tabs.setCurrentWidget(self.today_page)
         self.archive_label.setText(f"Archive: {database}")
         self.setup_error.clear()
@@ -250,15 +298,33 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export settings", f"Could not save export settings: {exc}")
             return False
         self.service = ArchiveService(self.service.database, directory)
-        self.capture.service = self.service
+        self.entry.service = self.service
         return True
 
-    def show_settings(self):
-        if self.service is None:
-            return
+    def _system_theme_changed(self, *_):
+        if self.theme['mode'] == 'system':
+            apply_theme(self, **self.theme)
+
+    def _save_theme(self, choice):
+        try:
+            self.settings_store.set_theme(**choice)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Theme settings', f'Could not save your theme: {exc}')
+            return False
+        self.theme = dict(choice)
+        apply_theme(self, **self.theme)
+        return True
+
+    def _settings_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Saga settings")
         layout = QVBoxLayout(dialog)
+        layout.addWidget(ThemePicker(self.theme, self._save_theme, dialog))
+        if self.service is None:
+            close_button = QPushButton('Close')
+            close_button.clicked.connect(dialog.accept)
+            layout.addWidget(close_button)
+            return dialog
         layout.addWidget(_plain_label(f"Archive: {self.service.database}"))
         export_label = _plain_label()
         layout.addWidget(export_label)
@@ -293,10 +359,15 @@ class MainWindow(QMainWindow):
         close_button.clicked.connect(dialog.accept)
         for button in (choose_button, disable_button, change_button, close_button):
             layout.addWidget(button)
+        return dialog
+
+    def show_settings(self):
+        dialog = self._settings_dialog()
         dialog.exec()
+        dialog.deleteLater()
 
     def closeEvent(self, event):
-        if self.capture is not None and not self.capture.confirm_discard():
+        if self.entry is not None and not self.entry.confirm_discard():
             event.ignore()
             return
         event.accept()

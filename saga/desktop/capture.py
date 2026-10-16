@@ -90,6 +90,7 @@ class CaptureWidget(QWidget):
         self.form_group.setLayout(form)
 
         self.preview_button = QPushButton("Preview")
+        self.preview_button.setProperty('primary', True)
         self.preview_button.clicked.connect(self.show_preview)
         self.cancel_button = QPushButton("Cancel draft")
         self.cancel_button.clicked.connect(self.cancel_draft)
@@ -107,6 +108,7 @@ class CaptureWidget(QWidget):
         self.edit_button = QPushButton("Edit")
         self.edit_button.clicked.connect(self.edit_draft)
         self.save_button = QPushButton("Save accomplishment")
+        self.save_button.setProperty('primary', True)
         self.save_button.clicked.connect(self.save)
         self.retry_button = QPushButton("Retry export")
         self.retry_button.clicked.connect(self.retry_export)

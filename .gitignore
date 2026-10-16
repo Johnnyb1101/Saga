@@ -16,6 +16,9 @@ ROADMAP.md
 __pycache__/
 *.pyc
 .venv/
+.build-venv/
+/build/
+/dist/
 venv/
 *.log
 scheduled-backup.log.*
