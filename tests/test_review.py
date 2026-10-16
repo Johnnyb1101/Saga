@@ -67,7 +67,7 @@ class ReviewTests(unittest.TestCase):
         report = export.build_review(self.con)
         self.assertEqual(report['schema_version'], 4)
         self.assertEqual(report['by_category_role'], groups)
-        self.assertEqual(self.con.execute('PRAGMA user_version').fetchone()[0], 5)
+        self.assertEqual(self.con.execute('PRAGMA user_version').fetchone()[0], db.SCHEMA_VERSION)
 
     def test_every_query_uses_category_role_and_inclusive_dates(self):
         selected = self.completion(duty='Training', flagged=True, measure='items', quantity=2)

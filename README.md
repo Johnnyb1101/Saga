@@ -134,7 +134,7 @@ For an **existing** database after updating the code:
 ```
 
 Do not run `init` to upgrade: it refuses an existing file. The current database
-schema is version 5. Migration saves a local backup before pending changes
+schema is version 6. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
@@ -239,6 +239,19 @@ In **Settings**, choose **System**, **Light**, or **Dark** appearance and a
 **Teal**, **Blue**, **Magenta**, or **Purple** accent. Changes appear immediately
 and are saved locally without changing your archive selection or unsaved drafts.
 System appearance follows Windows; the accent remains your chosen color.
+
+Both **Add Task** forms use **Choose category** with **Create category** and
+**Manage categories**. Create your own categories and choose whether their new
+accomplishments count toward reviews. Unused categories can be deleted;
+categories linked to records can be archived instead. Archiving removes a
+category from new-entry choices without changing existing tasks or history.
+Archived categories can be restored. Category changes save immediately;
+unsaved task and accomplishment drafts remain separate.
+
+Existing archives need the version 6 migration before this version can open
+them. Close older Saga windows, run `python main.py --db "path/to/archive.db" migrate`,
+then reopen Saga. Migration keeps a backup beside the archive. New archives
+already include category management.
 
 ## Usage
 
@@ -905,7 +918,7 @@ a scheduled task exists or has run successfully on a particular machine.
 External consumers can read `brief.json` (format version 2), `brief.md`, and
 `review.json` (format version 4), with `manifest.json` (format version 1)
 describing the published set. These formats are separate from database
-schema version 5. The bundled morning script calls the core through the CLI;
+schema version 6. The bundled morning script calls the core through the CLI;
 it does not consume the JSON files.
 
 Most commands against the default database refresh exports before running

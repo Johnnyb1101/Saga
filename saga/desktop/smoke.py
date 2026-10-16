@@ -61,11 +61,24 @@ def run_smoke(app, report_path):
                 raise RuntimeError("The exported snapshot is missing or stale")
             if len(service.today()["followups"]) != 1:
                 raise RuntimeError("Saved capture was not visible in Today")
+            if service.create_category('Smoke category') is not None:
+                raise RuntimeError('Category creation export failed')
             task_result = service.save_task({
-                'title': 'Invented undated task', 'category': 'work', 'due_date': None,
+                'title': 'Invented undated task', 'category': 'Smoke category', 'due_date': None,
             })
             if task_result.export_error or len(service.today()['undated']) != 1:
                 raise RuntimeError('Open task save or export failed')
+            if service.archive_category('Smoke category') is not None:
+                raise RuntimeError('Category archive export failed')
+            if ('Smoke category' in service.references()['categories']
+                    or len(service.today()['undated']) != 1):
+                raise RuntimeError('Archiving a category changed existing tasks or left it selectable')
+            if service.create_category('Unused smoke category') is not None:
+                raise RuntimeError('Unused category creation export failed')
+            if service.delete_category('Unused smoke category') is not None:
+                raise RuntimeError('Unused category deletion export failed')
+            if any(row['name'] == 'Unused smoke category' for row in service.category_options()):
+                raise RuntimeError('Unused category was not deleted')
             report["checks"][step] = True
 
             step = "settings_roundtrip"

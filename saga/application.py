@@ -72,13 +72,50 @@ class ArchiveService:
     def references(self):
         with closing(db.connect(self.database)) as con:
             con.execute('BEGIN')
-            categories = [row['name'] for row in reads.categories(con)]
+            categories = [row['name'] for row in reads.categories(con, active_only=True)]
             return {
                 'categories': categories,
                 'roles': {category: [row['name'] for row in reads.duties(con, category)]
                           for category in categories},
                 'measures': [row['name'] for row in reads.measures(con)],
             }
+
+    def category_options(self):
+        with closing(db.connect(self.database)) as con:
+            con.execute('BEGIN')
+            return [
+                {'name': row['name'], 'archived': row['status'] == 'archived',
+                 'in_use': bool(con.execute(
+                     """SELECT 1 FROM category_roles WHERE category=?
+                        UNION SELECT 1 FROM tasks WHERE category=?
+                        UNION SELECT 1 FROM recurrences WHERE category=?
+                        UNION SELECT 1 FROM completions WHERE category=? LIMIT 1""",
+                     (row['name'],) * 4,
+                 ).fetchone()), 'counts_toward_review': bool(row['counts_toward_review'])}
+                for row in reads.categories(con)
+            ]
+
+    def _save_category_change(self, operation, *args):
+        with closing(db.connect(self.database)) as con:
+            operation(con, *args)
+            if self.export_dir is not None:
+                try:
+                    export.write_all(con, self.export_dir)
+                except (export.ExportError, sqlite3.Error, OSError) as exc:
+                    return str(exc)
+        return None
+
+    def create_category(self, name, counts_toward_review=True):
+        return self._save_category_change(writes.create_category, name, counts_toward_review)
+
+    def archive_category(self, name):
+        return self._save_category_change(writes.set_category_status, name, True)
+
+    def restore_category(self, name):
+        return self._save_category_change(writes.set_category_status, name, False)
+
+    def delete_category(self, name):
+        return self._save_category_change(writes.delete_category, name)
 
     def preview_task(self, draft):
         """Normalize a task draft without creating rows or registering a role."""
@@ -97,7 +134,7 @@ class ArchiveService:
             if parsed.isoformat() != due_date:
                 raise ValueError("Due date must use YYYY-MM-DD")
         with closing(db.connect(self.database)) as con:
-            if category not in [row['name'] for row in reads.categories(con)]:
+            if category not in [row['name'] for row in reads.categories(con, active_only=True)]:
                 raise ValueError(f"Unknown category: {category}")
             writes.require_role(con, category, duty)
         return {
@@ -165,7 +202,7 @@ class ArchiveService:
         if not isinstance(flagged, bool):
             raise ValueError("Review flag must be Yes or No")  # noqa: TRY004 - invalid form data
         with closing(db.connect(self.database)) as con:
-            if category not in [row['name'] for row in reads.categories(con)]:
+            if category not in [row['name'] for row in reads.categories(con, active_only=True)]:
                 raise ValueError(f"Unknown category: {category}")
             writes.require_role(con, category, duty)
             if measure is not None and measure not in [row['name'] for row in reads.measures(con)]:

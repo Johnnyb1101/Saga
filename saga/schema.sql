@@ -9,20 +9,25 @@
 
 -- ---------------------------------------------------------------------
 -- categories
--- Reference data. Small, fixed, and required before any task can exist.
+-- Named categories are retained while any work or history refers to them.
 -- ---------------------------------------------------------------------
 CREATE TABLE categories (
     name                 TEXT    PRIMARY KEY,
     counts_toward_review INTEGER NOT NULL DEFAULT 1
-                             CHECK (counts_toward_review IN (0, 1))
+                             CHECK (counts_toward_review IN (0, 1)),
+    name_key             TEXT    NOT NULL DEFAULT '',
+    status               TEXT    NOT NULL DEFAULT 'active'
+                             CHECK (status IN ('active', 'archived'))
 ) STRICT;
 
-INSERT INTO categories (name, counts_toward_review) VALUES
-    ('work',     1),
-    ('certs',    1),
-    ('school',   1),
-    ('personal', 1),
-    ('home',     0);
+CREATE UNIQUE INDEX categories_name_key ON categories(name_key);
+
+INSERT INTO categories (name, name_key, counts_toward_review) VALUES
+    ('work',     'work',     1),
+    ('certs',    'certs',    1),
+    ('school',   'school',   1),
+    ('personal', 'personal', 1),
+    ('home',     'home',     0);
 
 -- ---------------------------------------------------------------------
 -- measures
@@ -187,4 +192,4 @@ CREATE TABLE measurement_followups (
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 ) STRICT;
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
