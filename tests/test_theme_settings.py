@@ -37,13 +37,13 @@ class ThemeSettingsTests(unittest.TestCase):
         self.store.select(second, None)
         reopened = SettingsStore(self.store.path)
         self.assertEqual(reopened.theme(), {'mode': 'dark', 'accent': 'purple'})
-        self.assertEqual(reopened.export_for(first), export_dir)
+        self.assertEqual(reopened.export_for(first), export_dir.resolve())
         self.assertIsNone(reopened.export_for(second))
-        self.assertEqual(reopened.load()['database'], str(second))
+        self.assertEqual(reopened.load()['database'], str(second.resolve()))
 
         reopened.set_theme('light', 'blue')
         self.assertEqual(self.store.theme(), {'mode': 'light', 'accent': 'blue'})
-        self.assertEqual(self.store.export_for(first), export_dir)
+        self.assertEqual(self.store.export_for(first), export_dir.resolve())
 
     def test_invalid_theme_fields_are_reported_and_never_overwritten(self):
         self.store.select(self.root / 'archive.db', None)

@@ -73,7 +73,8 @@ def run_smoke(app, report_path):
             store.select(database, root / "exports")
             store.set_theme('dark', 'magenta')
             reopened = SettingsStore(store.path)
-            if reopened.load()["database"] != str(database.resolve()) or reopened.export_for(database) != root / "exports":
+            if (reopened.load()["database"] != str(database.resolve())
+                    or reopened.export_for(database) != (root / "exports").resolve()):
                 raise RuntimeError("Selected archive and export folder did not persist")
             report["checks"][step] = True
 
