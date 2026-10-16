@@ -7,6 +7,18 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths
 
+THEME_MODES = ('system', 'light', 'dark')
+THEME_ACCENTS = ('teal', 'blue', 'magenta', 'purple')
+
+
+def _validate_theme(theme):
+    if not isinstance(theme, dict) or set(theme) != {'mode', 'accent'}:
+        raise ValueError('Saved theme must contain mode and accent')
+    if theme['mode'] not in THEME_MODES:
+        raise ValueError('Theme mode must be system, light, or dark')
+    if theme['accent'] not in THEME_ACCENTS:
+        raise ValueError('Theme accent must be teal, blue, magenta, or purple')
+
 
 def data_directory():
     # The application name is also fixed by the entry point. AppLocalDataLocation
@@ -41,13 +53,30 @@ class SettingsStore:
                 or (value is not None and (not isinstance(value, str) or not Path(value).is_absolute()))
                 for key, value in exports.items()):
             raise ValueError('Saved export paths must be absolute')
-        return {'database': database, 'exports': exports}
+        result = {'database': database, 'exports': exports}
+        if 'theme' in settings:
+            _validate_theme(settings['theme'])
+            result['theme'] = settings['theme']
+        return result
 
     def select(self, database, export_dir):
         settings = self.load()
         database = str(Path(database).resolve())
         settings['database'] = database
         settings['exports'][database] = str(Path(export_dir).resolve()) if export_dir is not None else None
+        self._save(settings)
+
+    def theme(self):
+        return self.load().get('theme', {'mode': 'system', 'accent': 'teal'})
+
+    def set_theme(self, mode, accent):
+        theme = {'mode': mode, 'accent': accent}
+        _validate_theme(theme)
+        settings = self.load()
+        settings['theme'] = theme
+        self._save(settings)
+
+    def _save(self, settings):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:

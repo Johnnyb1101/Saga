@@ -61,11 +61,17 @@ def run_smoke(app, report_path):
                 raise RuntimeError("The exported snapshot is missing or stale")
             if len(service.today()["followups"]) != 1:
                 raise RuntimeError("Saved capture was not visible in Today")
+            task_result = service.save_task({
+                'title': 'Invented undated task', 'category': 'work', 'due_date': None,
+            })
+            if task_result.export_error or len(service.today()['undated']) != 1:
+                raise RuntimeError('Open task save or export failed')
             report["checks"][step] = True
 
             step = "settings_roundtrip"
             store = SettingsStore(root / "settings" / "settings.json")
             store.select(database, root / "exports")
+            store.set_theme('dark', 'magenta')
             reopened = SettingsStore(store.path)
             if reopened.load()["database"] != str(database.resolve()) or reopened.export_for(database) != root / "exports":
                 raise RuntimeError("Selected archive and export folder did not persist")
@@ -77,7 +83,11 @@ def run_smoke(app, report_path):
             app.processEvents()
             if (window.service is None or window.service.database != database.resolve()
                     or window.capture is None
-                    or window.sections["followups"].table.rowCount() != 1):
+                    or window.theme != {'mode': 'dark', 'accent': 'magenta'}
+                    or window.windowIcon().isNull()
+                    or window.tabs.tabText(window.tabs.indexOf(window.entry)) != 'Add Task'
+                    or len(window.sections['undated'].cards) != 1
+                    or len(window.sections["followups"].cards) != 1):
                 raise RuntimeError("Main window did not load the disposable archive")
             if not window.close():
                 raise RuntimeError("Main window refused to close")

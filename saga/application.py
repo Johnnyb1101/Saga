@@ -15,6 +15,12 @@ class SaveResult:
     export_error: str | None = None
 
 
+@dataclass(frozen=True)
+class TaskSaveResult:
+    task_id: int
+    export_error: str | None = None
+
+
 def create_archive(path):
     """Create only an explicitly selected new archive; never replace one."""
     return db.init_db(Path(path).resolve())
@@ -45,14 +51,21 @@ class ArchiveService:
         day = dt.date.today().isoformat() if on is None else on
         if dt.date.fromisoformat(day).isoformat() != day:
             raise ValueError("Date must use YYYY-MM-DD")
+        day_date = dt.date.fromisoformat(day)
+        later_start = min(day_date.toordinal() + 14, dt.date.max.toordinal())
+        later_boundary = dt.date.fromordinal(later_start).isoformat()
         with closing(db.connect(self.database)) as con:
             # Keep all sections on the same date and SQLite snapshot.
             con.execute('BEGIN')
+            open_tasks = [dict(row) for row in reads.open_tasks(con)]
             return {
                 'date': day,
                 'overdue': [dict(row) for row in reads.overdue(con, on=day)],
                 'due_today': [dict(row) for row in reads.due_today(con, on=day)],
                 'due_soon': [dict(row) for row in reads.due_soon(con, days=14, on=day)],
+                'later': [task for task in open_tasks
+                          if task['due_date'] is not None and task['due_date'] > later_boundary],
+                'undated': [task for task in open_tasks if task['due_date'] is None],
                 'followups': [dict(row) for row in reads.measurement_followups(con, due_only=True, on=day)],
             }
 
@@ -66,6 +79,45 @@ class ArchiveService:
                           for category in categories},
                 'measures': [row['name'] for row in reads.measures(con)],
             }
+
+    def preview_task(self, draft):
+        """Normalize a task draft without creating rows or registering a role."""
+        title = _text(draft.get('title'), 'Title', required=True)
+        category = _text(draft.get('category'), 'Category', required=True)
+        duty = _text(draft.get('duty'), 'Role')
+        new_duty = _text(draft.get('new_duty'), 'New role', required=draft.get('new_duty') is not None)
+        if duty is not None and new_duty is not None:
+            raise ValueError("Choose an existing role or create a new one")
+        due_date = draft.get('due_date')
+        if due_date is not None:
+            try:
+                parsed = dt.date.fromisoformat(due_date)
+            except (TypeError, ValueError):
+                raise ValueError("Due date must use YYYY-MM-DD") from None
+            if parsed.isoformat() != due_date:
+                raise ValueError("Due date must use YYYY-MM-DD")
+        with closing(db.connect(self.database)) as con:
+            if category not in [row['name'] for row in reads.categories(con)]:
+                raise ValueError(f"Unknown category: {category}")
+            writes.require_role(con, category, duty)
+        return {
+            'values': {'title': title, 'category': category, 'duty': duty,
+                       'due_date': due_date},
+            'new_duty': new_duty,
+        }
+
+    def save_task(self, draft):
+        prepared = self.preview_task(draft)
+        with closing(db.connect(self.database)) as con:
+            task_id = writes.save_guided(con, 'add', **prepared)
+            export_error = None
+            if self.export_dir is not None:
+                try:
+                    export.write_all(con, self.export_dir)
+                except (export.ExportError, sqlite3.Error, OSError) as exc:
+                    # The task is committed; retry the export, never the save.
+                    export_error = str(exc)
+            return TaskSaveResult(task_id, export_error)
 
     def preview_capture(self, draft):
         """Normalize a draft without creating rows or registering references."""

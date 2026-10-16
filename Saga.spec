@@ -11,6 +11,7 @@ analysis = Analysis(
     binaries=[],
     datas=[(str(root / 'saga' / 'schema.sql'), 'saga'),
            (str(root / 'migrations' / '*.sql'), 'migrations'),
+           (str(root / 'saga' / 'desktop' / 'assets' / 'saga-calendar.ico'), 'saga/desktop/assets'),
            (str(root / 'LICENSE'), '.')]
           + copy_metadata('PySide6')
           + copy_metadata('PySide6_Essentials')
@@ -27,6 +28,7 @@ exe = EXE(
     pyz, analysis.scripts, [],
     exclude_binaries=True,
     name='Saga',
+    icon=str(root / 'saga' / 'desktop' / 'assets' / 'saga-calendar.ico'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

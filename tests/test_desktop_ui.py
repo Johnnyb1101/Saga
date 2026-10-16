@@ -71,10 +71,41 @@ class DesktopUiTests(unittest.TestCase):
         with closing(db.connect(self.database)) as con:
             writes.add_task(con, "<b>Invented overdue</b>", "work", due_date="2020-01-01")
         self.window.open_archive(self.database)
-        self.assertEqual(self.window.sections["overdue"].table.rowCount(), 1)
-        self.assertEqual(self.window.sections["overdue"].table.item(0, 1).text(), "<b>Invented overdue</b>")
+        self.assertEqual(len(self.window.sections["overdue"].cards), 1)
+        card = self.window.sections["overdue"].cards[0]
+        self.assertEqual(card.title_label.text(), "<b>Invented overdue</b>")
+        self.assertEqual(card.title_label.textFormat(), Qt.TextFormat.PlainText)
         self.assertTrue(self.window.sections["due_today"].empty.isVisibleTo(self.window.today_page))
-        self.assertEqual(self.window.sections["overdue"].table.accessibleName(), "Overdue")
+        self.assertEqual(self.window.sections["overdue"].accessibleName(), "Overdue")
+        self.assertEqual(card.accessibleName(), "<b>Invented overdue</b>")
+
+    def test_cards_preserve_details_and_replace_rows_on_refresh(self):
+        section = self.window.sections['overdue']
+        section.show_rows([{'title': 'Review', 'due_date': '2026-10-01',
+                            'category': 'work', 'duty': None}])
+        card = section.cards[0]
+        self.assertEqual(card.details_label.text(), 'Due Oct 1, 2026 · Category: work')
+        self.assertEqual(card.accessibleDescription(), card.details_label.text())
+        self.assertEqual(card.details_label.textFormat(), Qt.TextFormat.PlainText)
+        section.show_rows([{'title': 'Replacement', 'category': 'personal', 'duty': 'Home'}])
+        self.assertEqual(len(section.cards), 1)
+        self.assertEqual(section.cards[0].title_label.text(), 'Replacement')
+        self.assertIn('Role: Home', section.cards[0].details_label.text())
+        self.assertEqual(section.card_layout.count(), 2)
+        section.show_rows([])
+        self.assertEqual(section.cards, [])
+        self.assertFalse(section.empty.isHidden())
+        self.assertEqual(section.card_layout.count(), 1)
+
+    def test_followup_cards_show_outcome_and_reminder(self):
+        section = self.window.sections['followups']
+        section.show_rows([{'outcome': '<b>Awaiting results</b>', 'remind_on': '2026-10-16',
+                            'category': 'work', 'duty': 'Operations'}])
+        card = section.cards[0]
+        self.assertEqual(card.title_label.text(), '<b>Awaiting results</b>')
+        self.assertEqual(card.title_label.textFormat(), Qt.TextFormat.PlainText)
+        self.assertEqual(card.details_label.text(),
+                         'Remind on Oct 16, 2026 · Category: work · Role: Operations')
 
     def test_preview_cancel_and_save_once_after_edit(self):
         self.window.create_new_archive(self.database)
