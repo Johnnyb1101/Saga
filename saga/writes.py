@@ -101,12 +101,14 @@ def _insert_task(con, title, category, project_id, due_date, duty,
 
 
 def add_task(con, title, category, project_id=None, due_date=None, duty=None,
-             repeat=None, interval=1):
+             repeat=None, interval=1, month_day=None, second_month_day=None):
     """Insert a task, optionally with a schedule. Returns the first task id."""
     if repeat is None and interval != 1:
         raise ValueError("--interval requires --repeat")
+    if repeat is None and (month_day is not None or second_month_day is not None):
+        raise ValueError("monthly days require monthly recurrence")
     if repeat is not None:
-        due_date = occurrence_date(due_date, repeat, interval, 0)
+        due_date = occurrence_date(due_date, repeat, interval, 0, month_day, second_month_day)
     with con:
         if not con.in_transaction:
             con.execute("BEGIN IMMEDIATE")
@@ -116,9 +118,11 @@ def add_task(con, title, category, project_id=None, due_date=None, duty=None,
             _require_project_accepts_tasks(con, project_id)
             recurrence_id = con.execute(
                 """INSERT INTO recurrences
-                   (title, category, project_id, duty, frequency, interval, anchor_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (title, category, project_id, duty, repeat, interval, due_date),
+                   (title, category, project_id, duty, frequency, interval, anchor_date,
+                    month_day, second_month_day)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (title, category, project_id, duty, repeat, interval, due_date,
+                 month_day, second_month_day),
             ).lastrowid
         return _insert_task(con, title, category, project_id, due_date, duty,
                             recurrence_id, 0 if recurrence_id is not None else None)
@@ -403,7 +407,8 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
             series = con.execute("SELECT * FROM recurrences WHERE id=?", (task["recurrence_id"],)).fetchone()
             if series["status"] == "active":
                 next_index = task["occurrence_index"] + 1
-                due = occurrence_date(series["anchor_date"], series["frequency"], series["interval"], next_index)
+                due = occurrence_date(series["anchor_date"], series["frequency"], series["interval"], next_index,
+                                      series["month_day"], series["second_month_day"])
                 _insert_task(con, series["title"], series["category"], series["project_id"], due,
                              series["duty"], series["id"], next_index, allow_archived=True)
     return cur.lastrowid

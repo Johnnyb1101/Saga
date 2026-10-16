@@ -150,6 +150,8 @@ class RoleMigrationTests(unittest.TestCase):
             db.migrate(path)
             with contextlib.closing(db.connect(path)) as con:
                 for table, rows in before.items():
+                    if table == 'recurrences':
+                        rows = [row + (None, None) for row in rows]
                     self.assertEqual([tuple(r)[:-1] if table == 'completions' else tuple(r)
                                       for r in con.execute(f'SELECT * FROM {table}')], rows)
                 work = reads.duties(con, 'work', True)

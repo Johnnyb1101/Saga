@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from saga.application import schedule_description
 from saga.desktop.capture import CaptureWidget
 from saga.desktop.categories import CategoryPicker
 
@@ -63,12 +64,29 @@ class TaskWidget(QWidget):
         self.due_date.setEnabled(False)
         self.repeat_task = QCheckBox('Repeat this task')
         self.repeat_frequency = QComboBox()
-        for label, value in (('Daily', 'daily'), ('Weekly', 'weekly'), ('Monthly', 'monthly')):
+        for label, value in (('Daily', 'daily'), ('Weekly', 'weekly'),
+                             ('Every two weeks', 'biweekly'), ('Monthly', 'monthly'),
+                             ('Twice a month', 'twice_monthly')):
             self.repeat_frequency.addItem(label, value)
         self.repeat_frequency.setAccessibleName('Repeat schedule')
         self.repeat_interval = QSpinBox()
         self.repeat_interval.setRange(1, 999)
         self.repeat_interval.setAccessibleName('Repeat every how many days, weeks, or months')
+        self.repeat_weekday = QComboBox()
+        self.repeat_weekday.addItems(['Monday', 'Tuesday', 'Wednesday', 'Thursday',
+                                     'Friday', 'Saturday', 'Sunday'])
+        self.repeat_weekday.setCurrentIndex(QDate.currentDate().dayOfWeek() - 1)
+        self.repeat_weekday.setAccessibleName('Day of the week')
+        self.repeat_month_day = QSpinBox()
+        self.repeat_month_day.setRange(1, 31)
+        self.repeat_month_day.setValue(QDate.currentDate().day())
+        self.repeat_month_day.setAccessibleName('Day of the month')
+        self.repeat_second_day = QSpinBox()
+        self.repeat_second_day.setRange(1, 31)
+        self.repeat_second_day.setValue(15)
+        self.repeat_second_day.setAccessibleName('Second day of the month')
+        self.schedule_help = QLabel()
+        self.schedule_help.setWordWrap(True)
 
         form = QFormLayout()
         form.addRow("Task", self.title)
@@ -81,8 +99,14 @@ class TaskWidget(QWidget):
         form.addRow(self.repeat_task)
         form.addRow('Repeat', self.repeat_frequency)
         form.addRow('Every (days, weeks, or months)', self.repeat_interval)
+        form.addRow('Day of the week', self.repeat_weekday)
+        form.addRow('Day of the month', self.repeat_month_day)
+        form.addRow('Second day of the month', self.repeat_second_day)
+        form.addRow(self.schedule_help)
         form.setRowVisible(self.repeat_frequency, False)
         form.setRowVisible(self.repeat_interval, False)
+        for field in (self.repeat_weekday, self.repeat_month_day, self.repeat_second_day, self.schedule_help):
+            form.setRowVisible(field, False)
         self.form_layout = form
         self.form_group = QGroupBox("Something to do")
         self.form_group.setLayout(form)
@@ -138,8 +162,11 @@ class TaskWidget(QWidget):
         self.has_due_date.toggled.connect(self._due_date_changed)
         self.due_date.dateChanged.connect(self._mark_dirty)
         self.repeat_task.toggled.connect(self._repeat_changed)
-        self.repeat_frequency.currentIndexChanged.connect(self._mark_dirty)
+        self.repeat_frequency.currentIndexChanged.connect(self._schedule_changed)
         self.repeat_interval.valueChanged.connect(self._mark_dirty)
+        self.repeat_weekday.currentIndexChanged.connect(self._mark_dirty)
+        self.repeat_month_day.valueChanged.connect(self._mark_dirty)
+        self.repeat_second_day.valueChanged.connect(self._mark_dirty)
         self.reload_references()
         self._dirty = False
 
@@ -199,10 +226,27 @@ class TaskWidget(QWidget):
 
     def _repeat_changed(self, checked):
         self.form_layout.setRowVisible(self.repeat_frequency, checked)
-        self.form_layout.setRowVisible(self.repeat_interval, checked)
         if checked:
             self.has_due_date.setChecked(True)
         self.has_due_date.setEnabled(not checked)
+        self._schedule_changed()
+
+    def _schedule_changed(self, *_):
+        checked = self.repeat_task.isChecked()
+        frequency = self.repeat_frequency.currentData()
+        weekly = frequency in ('weekly', 'biweekly')
+        monthly = frequency in ('monthly', 'twice_monthly')
+        self.form_layout.setRowVisible(self.repeat_interval, checked and frequency in ('daily', 'weekly', 'monthly'))
+        self.form_layout.setRowVisible(self.repeat_weekday, checked and weekly)
+        self.form_layout.setRowVisible(self.repeat_month_day, checked and monthly)
+        self.form_layout.setRowVisible(self.repeat_second_day, checked and frequency == 'twice_monthly')
+        self.form_layout.setRowVisible(self.schedule_help, checked)
+        self.form_layout.labelForField(self.due_date).setText('Start on or after' if checked else 'Choose date')
+        self.schedule_help.setText(
+            'The first due date will be the first selected day on or after your start date.'
+            + (' Short months use the last day. If both dates land on that day, only one task is created.'
+               if frequency == 'twice_monthly' else
+               ' Short months use the last day, then return to your chosen date.' if monthly else ''))
         self._mark_dirty()
 
     def draft(self):
@@ -215,28 +259,38 @@ class TaskWidget(QWidget):
             "due_date": self.due_date.date().toString("yyyy-MM-dd") if self.has_due_date.isChecked() else None,
         }
         if self.repeat_task.isChecked():
-            draft.update(repeat=self.repeat_frequency.currentData(), interval=self.repeat_interval.value())
+            frequency = self.repeat_frequency.currentData()
+            draft.update(repeat={'biweekly': 'weekly', 'twice_monthly': 'monthly'}.get(frequency, frequency),
+                         interval=2 if frequency == 'biweekly' else 1 if frequency == 'twice_monthly'
+                         else self.repeat_interval.value())
+            if frequency in ('weekly', 'biweekly'):
+                draft['weekday'] = self.repeat_weekday.currentIndex()
+            elif frequency in ('monthly', 'twice_monthly'):
+                draft['month_day'] = self.repeat_month_day.value()
+                if frequency == 'twice_monthly':
+                    draft['second_month_day'] = self.repeat_second_day.value()
         return draft
 
     def show_preview(self):
         draft = self.draft()
         try:
-            self.service.preview_task(draft)
+            prepared = self.service.preview_task(draft)
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status.setText(f"Check the draft: {exc}")
             return
         self._preview_draft = draft
+        values = prepared.get('values', draft)
         details = (
             ("Task", draft["title"].strip()),
             ("Category", draft["category"]),
             ("Role", draft["new_duty"] or draft["duty"] or "None"),
-            ("Due", draft["due_date"] or "No due date"),
+            ("First due" if draft.get('repeat') else "Due", values["due_date"] or "No due date"),
         )
         self.preview_text.setPlainText("\n".join(f"{label}: {value}" for label, value in details))
         if draft.get('repeat'):
-            unit = {'daily': 'day', 'weekly': 'week', 'monthly': 'month'}[draft['repeat']]
-            number = draft['interval']
-            self.preview_text.appendPlainText(f"Repeat: Every {number} {unit}{'s' if number != 1 else ''}")
+            description = schedule_description(draft['repeat'], draft['interval'], values['due_date'],
+                                               values.get('month_day'), values.get('second_month_day'))
+            self.preview_text.appendPlainText(f'Repeat: {description}')
             self.preview_text.appendPlainText('Completing this task creates the next occurrence.')
         self.form_group.setEnabled(False)
         self.form_group.hide()
@@ -330,6 +384,9 @@ class TaskWidget(QWidget):
         self.repeat_task.setChecked(False)
         self.repeat_frequency.setCurrentIndex(0)
         self.repeat_interval.setValue(1)
+        self.repeat_weekday.setCurrentIndex(QDate.currentDate().dayOfWeek() - 1)
+        self.repeat_month_day.setValue(QDate.currentDate().day())
+        self.repeat_second_day.setValue(15)
         self.has_due_date.setChecked(False)
         self.due_date.setDate(QDate.currentDate())
         self.status.clear()

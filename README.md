@@ -136,7 +136,7 @@ For an **existing** database after updating the code:
 ```
 
 Do not run `init` to upgrade: it refuses an existing file. The current database
-schema is version 6. Migration saves a local backup before pending changes
+schema is version 7. Migration saves a local backup before pending changes
 and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
@@ -188,12 +188,24 @@ or uncheck **Set a due date** to remove it. Preview the old and new dates before
 saving. For recurring tasks, this changes only the current occurrence; future
 dates keep the original schedule. Today refreshes after you return from saving.
 
-In **Add Task**, check **Repeat this task** to choose Daily, Weekly, or Monthly
-and how often it repeats. A first due date is required. Completing an occurrence
-creates the next task on the original schedule. Today cards show that schedule.
+In **Add Task**, check **Repeat this task** to choose Daily, Weekly,
+**Every two weeks**, Monthly, or **Twice a month**. Weekly schedules let you
+choose a weekday. Monthly schedules let you choose a date from 1 to 31;
+twice-monthly schedules use two different dates, such as the 1st and 15th.
+Daily, weekly, and monthly schedules also let you choose how often they repeat.
+Choose a start date: the preview shows the first matching due date on or after
+that date. Short months use the last day, then return to your chosen date.
+If both monthly dates fall on the same last day, only one occurrence is created.
+Completing an occurrence creates the next task on the original schedule.
+Today cards show the schedule. Existing schedules keep their original dates.
 To end it, open the task and choose **Stop repeating permanently**. The confirmation
 explains that the current task is cancelled, no future tasks will be created,
 and previous accomplishments remain saved. **Keep task** leaves it unchanged.
+
+Existing archives need the schema 7 upgrade before this version can open them.
+Run `python main.py --db "PATH_TO_YOUR_ARCHIVE" migrate` using Python 3.15
+from this checkout. Migration creates a backup before updating the archive.
+The desktop reports older archives rather than upgrading them automatically.
 
 **Add Task** creates future work with an optional due date. Check **I’ve already
 finished this** to record completed work that was not already tracked, with a
