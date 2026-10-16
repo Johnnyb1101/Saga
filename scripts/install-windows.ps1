@@ -29,7 +29,7 @@ if ($check.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $reportPath)) {
     throw "Installed Saga check failed; shortcuts were not changed. Report: $reportPath"
 }
 $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-if (-not $report.success -or -not $report.frozen) {
+if (-not $report.success -or -not $report.frozen -or $report.runtime.python -notmatch '^3\.15\.') {
     throw "Invalid installed check report; shortcuts were not changed: $reportPath"
 }
 

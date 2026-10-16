@@ -5,6 +5,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $pythonPath = (Resolve-Path -LiteralPath $Python).Path
+& $pythonPath -c 'import sys; sys.exit(sys.version_info[:2] != (3, 15))'
+if ($LASTEXITCODE -ne 0) {
+    throw 'Build Saga with Python 3.15. Recreate .build-venv using Python 3.15 first.'
+}
 $distPath = Join-Path $repoRoot 'dist'
 $workPath = Join-Path $repoRoot 'build'
 
@@ -31,6 +35,8 @@ if ($check.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $reportPath)) {
     throw "Packaged Saga check failed. Report: $reportPath"
 }
 $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-if (-not $report.success -or -not $report.frozen) { throw "Invalid packaged check report: $reportPath" }
+if (-not $report.success -or -not $report.frozen -or $report.runtime.python -notmatch '^3\.15\.') {
+    throw "Invalid packaged check report or Python runtime: $reportPath"
+}
 Write-Output "Built and checked: $appPath"
 Write-Output "Check report: $reportPath"
