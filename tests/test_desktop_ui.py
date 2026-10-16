@@ -47,7 +47,7 @@ class DesktopUiTests(unittest.TestCase):
         self.assertIs(self.window.pages.currentWidget(), self.window.archive_page)
         self.assertTrue(self.database.exists())
         self.assertEqual(self.store.load()["database"], str(self.database.resolve()))
-        self.assertEqual(self.store.export_for(self.database), self.database.parent / "saga-exports")
+        self.assertEqual(self.store.export_for(self.database), (self.database.parent / "saga-exports").resolve())
         reopened = MainWindow(self.store)
         self.addCleanup(reopened.close)
         self.assertIs(reopened.pages.currentWidget(), reopened.archive_page)
@@ -182,8 +182,8 @@ class DesktopUiTests(unittest.TestCase):
         second = self.root / "second.db"
         self.window.create_new_archive(first)
         self.window.create_new_archive(second)
-        self.assertEqual(self.store.export_for(first), self.root / "first-exports")
-        self.assertEqual(self.store.export_for(second), self.root / "second-exports")
+        self.assertEqual(self.store.export_for(first), (self.root / "first-exports").resolve())
+        self.assertEqual(self.store.export_for(second), (self.root / "second-exports").resolve())
 
     def test_nested_save_action_cannot_commit_twice(self):
         db.init_db(self.database)

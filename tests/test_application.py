@@ -18,7 +18,7 @@ class ArchiveServiceTests(unittest.TestCase):
         self.addCleanup(workspace.cleanup)
         self.root = Path(workspace.name)
         self.database = self.root / "nested" / "archive.db"
-        self.assertEqual(application.create_archive(self.database), self.database)
+        self.assertEqual(application.create_archive(self.database), self.database.resolve())
         self.service = application.ArchiveService(self.database)
 
     def draft(self, **changes):
