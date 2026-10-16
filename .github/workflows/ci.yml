@@ -21,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14'
+          python-version: '3.15'
           check-latest: true
       - name: Install development tools
         run: python -m pip install -r requirements-dev.txt
@@ -31,13 +31,9 @@ jobs:
         run: python -m ruff check --no-cache .
 
   desktop:
-    name: Desktop (Python ${{ matrix.python-version }})
+    name: Desktop (Python 3.15)
     runs-on: windows-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.14', '3.15']
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -48,7 +44,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.15'
           check-latest: true
       - name: Install desktop and development tools
         run: python -m pip install -r requirements-dev.txt -r requirements-desktop.txt

@@ -94,9 +94,11 @@ capture through the same core functions. Assistant integration is planned.
 
 ## Requirements
 
-Python 3.14 with SQLite 3.37 or later. `sqlite3` is in the standard library;
-Ruff is an optional development tool, not a runtime requirement. The desktop
-preview additionally requires the packages in `requirements-desktop.txt`.
+Python 3.15 with SQLite 3.37 or later. Python 3.15 is the sole supported
+runtime for the CLI, desktop preview, and Windows build. `sqlite3` is in the
+standard library; Ruff is an optional development tool, not a runtime
+requirement. The desktop preview additionally requires the packages in
+`requirements-desktop.txt`.
 
 The SQLite floor is real: every table is declared `STRICT`, which arrived
 in 3.37. Check yours with:
@@ -106,16 +108,16 @@ in 3.37. Check yours with:
 ## Setup and upgrades
 
 From the repository directory on Windows, create an environment using a
-complete Python 3.14 installation:
+complete Python 3.15 installation:
 
 ```powershell
-py -3.14 -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\python.exe --version
 .\.venv\Scripts\python.exe -c "import sqlite3; print(sqlite3.sqlite_version)"
 ```
 
 If the launcher is unavailable or points to an incomplete installation, use
-the full path to a working Python 3.14 executable for the first command.
+the full path to a working Python 3.15 executable for the first command.
 Reusing an environment created with an older interpreter does not upgrade it.
 The examples below use `python` for brevity; replace it with
 `.\.venv\Scripts\python.exe` when the environment is not activated.
@@ -167,7 +169,7 @@ profile in the current shell. The helper itself does not edit your profile.
 
 ### Windows desktop preview
 
-Install the optional desktop requirements in the existing Python 3.14 virtual
+Install the optional desktop requirements in the existing Python 3.15 virtual
 environment, then launch from the checkout:
 
 ```powershell
@@ -202,15 +204,15 @@ recording it again. Exports can also be disabled.
 
 The desktop makes no AI calls;
 provider setup and assistant chat are later milestones. PySide6 is optional for
-CLI use. Python 3.14 is the initial desktop runtime; a separate CI job checks
-Python 3.15 compatibility. Passing those tests does not verify installer
-packaging. Distribution must include the appropriate Qt license notices.
+CLI use. Python 3.15 is the sole supported desktop runtime. Passing the desktop
+CI tests does not verify installer packaging. Distribution must include the
+appropriate Qt license notices.
 
 ### Standalone Windows installation
 
 The Windows build includes Python and Qt, so the installed app can run without
 the checkout or a separately installed Python. Build it on Windows with Python
-3.14. These build tools are optional and separate from the CLI environment:
+3.15. These build tools are optional and separate from the CLI environment:
 
 ```powershell
 .\.venv\Scripts\python.exe -m venv .build-venv
@@ -810,7 +812,7 @@ when upgrading Saga. No third-party packages are required.
 
 Use your chosen destination if OneDrive is not configured. The first command
 runs immediately; the setup script registers a daily Windows task using the
-project's Python 3.14 virtual environment and absolute paths. It runs hidden
+project's Python 3.15 virtual environment and absolute paths. It runs hidden
 as the current user **while signed in**, including while the screen is locked.
 Missed runs are eligible to run when available; this does not wake a powered-off
 computer. It permits battery operation, prevents overlapping task instances,
@@ -1009,7 +1011,7 @@ data used in examples and tests is invented.
 
 ## Development checks
 
-Use a virtual environment created with Python 3.14 and install Ruff as a
+Use a virtual environment created with Python 3.15 and install Ruff as a
 development tool. On Windows, run:
 
 ```powershell
@@ -1019,14 +1021,14 @@ development tool. On Windows, run:
 ```
 
 GitHub Actions runs the full test suite and Ruff on Windows with the latest
-available Python 3.14 patch for pushes and pull requests. The stable check
+available Python 3.15 patch for pushes and pull requests. The stable check
 name is `Tests and lint`. Dependabot checks weekly for updates to the pinned
 development tools and GitHub Actions; update pull requests use the same CI.
 Updates are reviewed and merged manually.
 
 The optional desktop tests run when PySide6 is installed; core-only environments
-skip those tests explicitly. The separate desktop CI jobs install the optional
-requirements and run the full suite on Python 3.14 and 3.15, with Qt's offscreen
+skip those tests explicitly. The desktop CI job installs the optional
+requirements and runs the full suite on Python 3.15, with Qt's offscreen
 platform. These checks cover interactions and rendering setup, not native
 screen-reader behavior or installer packaging. Local desktop validation should
 also check keyboard navigation and layout at Windows display scaling settings.
