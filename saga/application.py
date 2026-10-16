@@ -36,6 +36,59 @@ def _text(value, label, required=False):
     return value.strip()
 
 
+def _completion_evidence(draft):
+    """Normalize answers shared by standalone capture and task completion."""
+    outcome = _text(draft.get('outcome'), 'Outcome', required=True)
+    date = draft.get('completed_date')
+    completed_at = None
+    if date is not None:
+        try:
+            parsed = dt.date.fromisoformat(date)
+        except (TypeError, ValueError):
+            raise ValueError("Completion date must use YYYY-MM-DD") from None
+        if parsed.isoformat() != date or parsed > dt.date.today():
+            raise ValueError("Completion date must be today or earlier, in YYYY-MM-DD form")
+        completed_at = f'{date} 00:00:00'
+    measure = _text(draft.get('measure'), "What you're counting")
+    new_measure = _text(draft.get('new_measure'), "What you're counting",
+                        required=draft.get('new_measure') is not None)
+    if measure is not None and new_measure is not None:
+        raise ValueError("Choose what you're counting or enter a new name")
+    status = draft.get('measurement_status')
+    if status not in ('measured', 'not_applicable', 'unknown'):
+        raise ValueError("Choose Yes, No number needed, or I'll add a number later")
+    quantity = draft.get('quantity')
+    if quantity is not None:
+        if isinstance(quantity, bool):
+            raise ValueError("Number must be a finite number")
+        try:
+            quantity = float(quantity)
+        except (ValueError, TypeError, OverflowError):
+            raise ValueError("Number must be a finite number") from None
+    unit = measure or new_measure
+    if status == 'measured' and (unit is None or quantity is None):
+        raise ValueError("Enter an amount and what you're counting")
+    if status != 'measured' and (unit is not None or quantity is not None):
+        raise ValueError("Choose Yes to add an amount and what you're counting, or clear them")
+    writes.measurement_state(unit, quantity, status)
+    reminder = draft.get('remind_on')
+    if status == 'unknown':
+        try:
+            writes.validate_reminder(reminder)
+        except ValueError:
+            raise ValueError("Follow-up date must be today or later, in YYYY-MM-DD form") from None
+    elif reminder is not None:
+        raise ValueError("A follow-up date is only valid for I'll add a number later")
+    flagged = draft.get('flagged', False)
+    if not isinstance(flagged, bool):
+        raise ValueError("Review flag must be Yes or No")  # noqa: TRY004 - invalid form data
+    return {
+        'outcome': outcome, 'completed_at': completed_at, 'measure': measure,
+        'quantity': quantity, 'measurement_status': status,
+        'remind_on': reminder, 'flagged': flagged,
+    }, new_measure
+
+
 class ArchiveService:
     """Each operation owns a connection; no connections escape to widgets."""
 
@@ -156,61 +209,59 @@ class ArchiveService:
                     export_error = str(exc)
             return TaskSaveResult(task_id, export_error)
 
+    def task_details(self, task_id):
+        """Return a full snapshot of an open task for a completion draft."""
+        with closing(db.connect(self.database)) as con:
+            task = reads.get_task(con, task_id)
+            if task is None or task['status'] != 'open':
+                raise ValueError("Choose an open task to complete")
+            return dict(task)
+
+    def preview_completion(self, expected_task, draft):
+        """Normalize a task completion without writing or changing task context."""
+        with closing(db.connect(self.database)) as con:
+            task = reads.get_task(con, expected_task['id'])
+            if task is None or dict(task) != expected_task or task['status'] != 'open':
+                raise ValueError("This task changed. Select it again")
+            values, new_measure = _completion_evidence(draft)
+            if values['measure'] is not None and values['measure'] not in [
+                    row['name'] for row in reads.measures(con)]:
+                raise ValueError(f"Unknown unit: {values['measure']}")
+        values['task_id'] = expected_task['id']
+        return {'values': values, 'new_measure': new_measure}
+
+    def save_completion(self, expected_task, draft):
+        prepared = self.preview_completion(expected_task, draft)
+        with closing(db.connect(self.database)) as con:
+            completion_id = writes.save_guided(
+                con, 'done', **prepared, expected_task=expected_task,
+            )
+            export_error = None
+            if self.export_dir is not None:
+                try:
+                    export.write_all(con, self.export_dir)
+                except (export.ExportError, sqlite3.Error, OSError) as exc:
+                    export_error = str(exc)
+            return SaveResult(completion_id, export_error)
+
     def preview_capture(self, draft):
         """Normalize a draft without creating rows or registering references."""
         category = _text(draft.get('category'), 'Category', required=True)
-        outcome = _text(draft.get('outcome'), 'Outcome', required=True)
-        date = draft.get('completed_date')
-        completed_at = None
-        if date is not None:
-            try:
-                parsed = dt.date.fromisoformat(date)
-            except (TypeError, ValueError):
-                raise ValueError("Completion date must use YYYY-MM-DD") from None
-            if parsed.isoformat() != date or parsed > dt.date.today():
-                raise ValueError("Completion date must be today or earlier, in YYYY-MM-DD form")
-            completed_at = f'{date} 00:00:00'
+        values, new_measure = _completion_evidence(draft)
         duty = _text(draft.get('duty'), 'Role')
         new_duty = _text(draft.get('new_duty'), 'New role', required=draft.get('new_duty') is not None)
-        measure = _text(draft.get('measure'), 'Unit')
-        new_measure = _text(draft.get('new_measure'), 'New unit', required=draft.get('new_measure') is not None)
         if duty is not None and new_duty is not None:
             raise ValueError("Choose an existing role or create a new one")
-        if measure is not None and new_measure is not None:
-            raise ValueError("Choose an existing unit or create a new one")
-        status = draft.get('measurement_status')
-        if status not in ('measured', 'not_applicable', 'unknown'):
-            raise ValueError("Choose Measured, Not applicable, or Not known yet")
-        quantity = draft.get('quantity')
-        if quantity is not None:
-            if isinstance(quantity, bool):
-                raise ValueError("Quantity must be a number")
-            try:
-                quantity = float(quantity)
-            except (ValueError, TypeError, OverflowError):
-                raise ValueError("Quantity must be a finite number") from None
-        unit = measure or new_measure
-        writes.measurement_state(unit, quantity, status)
-        if status == 'measured' and (unit is None or quantity is None):
-            raise ValueError("Measured requires both a unit and quantity")
-        reminder = draft.get('remind_on')
-        if status == 'unknown':
-            writes.validate_reminder(reminder)
-        elif reminder is not None:
-            raise ValueError("A reminder is only valid for Not known yet")
-        flagged = draft.get('flagged', False)
-        if not isinstance(flagged, bool):
-            raise ValueError("Review flag must be Yes or No")  # noqa: TRY004 - invalid form data
         with closing(db.connect(self.database)) as con:
             if category not in [row['name'] for row in reads.categories(con, active_only=True)]:
                 raise ValueError(f"Unknown category: {category}")
             writes.require_role(con, category, duty)
-            if measure is not None and measure not in [row['name'] for row in reads.measures(con)]:
-                raise ValueError(f"Unknown unit: {measure}")
+            if values['measure'] is not None and values['measure'] not in [
+                    row['name'] for row in reads.measures(con)]:
+                raise ValueError(f"Unknown unit: {values['measure']}")
+        values.update(category=category, duty=duty)
         return {
-            'values': {'category': category, 'outcome': outcome, 'completed_at': completed_at,
-                       'duty': duty, 'measure': measure, 'quantity': quantity,
-                       'measurement_status': status, 'remind_on': reminder, 'flagged': flagged},
+            'values': values,
             'new_duty': new_duty, 'new_measure': new_measure,
         }
 

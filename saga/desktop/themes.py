@@ -49,6 +49,8 @@ def apply_theme(window, mode, accent):
     window.setStyleSheet(DESKTOP_STYLE + f'''
         QWidget {{ background-color: {background}; color: {foreground}; }}
         QWidget#taskCard {{ background-color: {surface}; border-radius: 7px; }}
+        QPushButton#taskCard {{ border: 1px solid {border}; padding: 0px; }}
+        QPushButton#taskCard:hover, QPushButton#taskCard:focus {{ border: 1px solid {selected}; }}
         QWidget#taskCard QLabel {{ background-color: transparent; }}
         QLabel#cardDetails {{ color: {muted}; }}
         QLineEdit, QPlainTextEdit, QComboBox, QDateEdit, QAbstractItemView {{

@@ -11,6 +11,7 @@ from PySide6.QtCore import QStandardPaths, qVersion
 
 from saga import db, export, scheduled_backup
 from saga.application import ArchiveService, create_archive
+from saga.desktop.completion import CompletionDialog
 from saga.desktop.settings import SettingsStore
 from saga.desktop.window import MainWindow
 
@@ -79,10 +80,27 @@ def run_smoke(app, report_path):
                 raise RuntimeError('Unused category deletion export failed')
             if any(row['name'] == 'Unused smoke category' for row in service.category_options()):
                 raise RuntimeError('Unused category was not deleted')
+            tracked = service.save_task({'title': 'Invented future task', 'category': 'work',
+                                         'due_date': '2999-01-01'})
+            completion = CompletionDialog(service, tracked.task_id)
+            try:
+                completion.form.outcome.setPlainText('Invented task completed early')
+                completion.form.measurement_status.setCurrentIndex(
+                    completion.form.measurement_status.findData('not_applicable'))
+                completion.form.show_preview()
+                completion.form.save()
+                if not completion.form._committed:
+                    raise RuntimeError('Tracked task completion failed')
+            finally:
+                # Smoke data is disposable, including drafts left by failures.
+                completion.form._dirty = False
+                completion.close()
             snapshot, _ = scheduled_backup.run(database, root / 'backups', keep=30)
             with closing(db.connect(snapshot)) as restored:
-                if (len(restored.execute('SELECT id FROM tasks').fetchall()) != 1
-                        or len(restored.execute('SELECT id FROM completions').fetchall()) != 1):
+                if (len(restored.execute('SELECT id FROM tasks').fetchall()) != 2
+                        or len(restored.execute('SELECT id FROM completions').fetchall()) != 2
+                        or restored.execute('SELECT status FROM tasks WHERE id=?',
+                                            (tracked.task_id,)).fetchone()[0] != 'done'):
                     raise RuntimeError('Verified backup did not preserve the disposable archive')
             if not database.is_file():
                 raise RuntimeError('Backing up moved the working archive')

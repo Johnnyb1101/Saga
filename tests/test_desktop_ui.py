@@ -168,7 +168,7 @@ class DesktopUiTests(unittest.TestCase):
         capture = self.window.capture
         capture.outcome.setPlainText("Invented completion")
         capture.show_preview()
-        self.assertIn("Choose Measured", capture.status.text())
+        self.assertIn("Choose Yes, No number needed, or I'll add a number later", capture.status.text())
         self.assertFalse(capture.preview_group.isVisibleTo(capture))
         capture.role.setCurrentIndex(capture.role.count() - 1)
         capture.new_role.setText("New invented role")

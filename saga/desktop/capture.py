@@ -28,9 +28,10 @@ class CaptureWidget(QWidget):
     saved = Signal()
     NEW = object()
 
-    def __init__(self, service, parent=None):
+    def __init__(self, service, parent=None, *, tracked_task=None):
         super().__init__(parent)
         self.service = service
+        self.tracked_task = dict(tracked_task) if tracked_task is not None else None
         self._dirty = False
         self._committed = False
         self._saving = False
@@ -52,6 +53,7 @@ class CaptureWidget(QWidget):
         self.outcome.setPlaceholderText("What happened and why did it matter?")
         self.outcome.setAccessibleName("Outcome")
         self.outcome.setTabChangesFocus(True)
+        self.outcome.setMinimumHeight(110)
         self.use_today = QCheckBox("Use today and the time of save")
         self.use_today.setChecked(True)
         self.completed_date = QDateEdit(QDate.currentDate())
@@ -60,47 +62,59 @@ class CaptureWidget(QWidget):
         self.completed_date.setAccessibleName("Completion date")
         self.completed_date.setEnabled(False)
         self.measurement_status = QComboBox()
-        self.measurement_status.setAccessibleName("Measurement choice")
-        self.measurement_status.addItem("Choose a measurement decision…", None)
-        self.measurement_status.addItem("Measured", "measured")
-        self.measurement_status.addItem("Not applicable", "not_applicable")
-        self.measurement_status.addItem("Not known yet", "unknown")
+        self.measurement_status.setAccessibleName("Can you put a number to this?")
+        self.measurement_status.addItem("Choose an option…", None)
+        self.measurement_status.addItem("Yes", "measured")
+        self.measurement_status.addItem("No number needed", "not_applicable")
+        self.measurement_status.addItem("I’ll add a number later", "unknown")
         self.measure = QComboBox()
-        self.measure.setAccessibleName("Measurement unit")
+        self.measure.setAccessibleName("What are you counting?")
         self.new_measure = QLineEdit()
-        self.new_measure.setPlaceholderText("New measurement unit")
-        self.new_measure.setAccessibleName("New measurement unit")
+        self.new_measure.setPlaceholderText("e.g. applications")
+        self.new_measure.setAccessibleName("What are you counting? Type a name")
         self.quantity = QLineEdit()
-        self.quantity.setPlaceholderText("A finite number, including zero")
-        self.quantity.setAccessibleName("Quantity")
+        self.quantity.setPlaceholderText("e.g. 3")
+        self.quantity.setAccessibleName("Amount")
         self.remind_on = QDateEdit(QDate.currentDate())
         self.remind_on.setCalendarPopup(True)
         self.remind_on.setDisplayFormat("yyyy-MM-dd")
-        self.remind_on.setAccessibleName("Reminder date")
+        self.remind_on.setAccessibleName("When should Saga remind you?")
         self.flagged = QCheckBox("Flag for review")
 
         form = QFormLayout()
-        form.addRow("Category", self.category)
-        form.addRow(self.role_help)
-        form.addRow("Role (optional)", self.role)
-        form.addRow("Role name", self.new_role)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        if tracked_task is None:
+            form.addRow("Category", self.category)
+            form.addRow(self.role_help)
+            form.addRow("Role (optional)", self.role)
+            form.addRow("Role name", self.new_role)
+        else:
+            self.task_context = QLabel(self._tracked_context_text())
+            self.task_context.setTextFormat(Qt.TextFormat.PlainText)
+            self.task_context.setWordWrap(True)
+            self.task_context.setAccessibleName("Task details")
+            form.addRow(self.task_context)
         form.addRow("Outcome", self.outcome)
         form.addRow("Completion date", self.use_today)
         form.addRow("Choose date", self.completed_date)
-        form.addRow("Measurement", self.measurement_status)
-        form.addRow("Unit", self.measure)
-        form.addRow("New unit", self.new_measure)
-        form.addRow("Quantity", self.quantity)
-        form.addRow("Remind me on", self.remind_on)
+        self.measurement_help = QLabel("For example: 3 applications submitted, 2 hours volunteered, or 5 people helped.")
+        self.measurement_help.setTextFormat(Qt.TextFormat.PlainText)
+        self.measurement_help.setWordWrap(True)
+        form.addRow(self.measurement_help)
+        form.addRow("Can you put a number to this?", self.measurement_status)
+        form.addRow("What are you counting?", self.measure)
+        form.addRow("Type it here", self.new_measure)
+        form.addRow("Amount", self.quantity)
+        form.addRow("When should Saga remind you?", self.remind_on)
         form.addRow("Review", self.flagged)
         self.form_layout = form
-        self.form_group = QGroupBox("Accomplishment")
+        self.form_group = QGroupBox("Completed work" if tracked_task is None else "Complete task")
         self.form_group.setLayout(form)
 
         self.preview_button = QPushButton("Preview")
         self.preview_button.setProperty('primary', True)
         self.preview_button.clicked.connect(self.show_preview)
-        self.cancel_button = QPushButton("Cancel draft")
+        self.cancel_button = QPushButton("Cancel" if tracked_task is not None else "Cancel draft")
         self.cancel_button.clicked.connect(self.cancel_draft)
         form_actions = QHBoxLayout()
         form_actions.addWidget(self.preview_button)
@@ -115,7 +129,7 @@ class CaptureWidget(QWidget):
         preview_actions = QHBoxLayout()
         self.edit_button = QPushButton("Edit")
         self.edit_button.clicked.connect(self.edit_draft)
-        self.save_button = QPushButton("Save accomplishment")
+        self.save_button = QPushButton("Mark complete" if tracked_task is not None else "Save accomplishment")
         self.save_button.setProperty('primary', True)
         self.save_button.clicked.connect(self.save)
         self.retry_button = QPushButton("Retry export")
@@ -127,7 +141,8 @@ class CaptureWidget(QWidget):
         preview_actions.addWidget(self.edit_button)
         preview_actions.addWidget(self.save_button)
         preview_actions.addWidget(self.retry_button)
-        preview_actions.addWidget(self.new_button)
+        if tracked_task is None:
+            preview_actions.addWidget(self.new_button)
         preview_layout.addLayout(preview_actions)
         self.preview_group.hide()
 
@@ -157,6 +172,15 @@ class CaptureWidget(QWidget):
         self._measurement_changed()
         self._dirty = False
 
+    def _tracked_context_text(self):
+        task = self.tracked_task
+        return "\n".join((
+            f"Task: {task['title']}",
+            f"Category: {task['category']}",
+            f"Role: {task.get('duty') or 'None'}",
+            f"Due: {task.get('due_date') or 'No due date'}",
+        ))
+
     @property
     def has_unsaved_draft(self):
         return self._dirty and not self._committed
@@ -178,7 +202,7 @@ class CaptureWidget(QWidget):
         self.measure.clear()
         for name in refs["measures"]:
             self.measure.addItem(name, name)
-        self.measure.addItem("Add a new unit…", self.NEW)
+        self.measure.addItem("Add something else…", self.NEW)
         measure_index = self.measure.findData(selected_measure)
         self.measure.setCurrentIndex(max(measure_index, 0))
         self.measure.blockSignals(False)
@@ -211,7 +235,8 @@ class CaptureWidget(QWidget):
         self._mark_dirty()
 
     def _role_changed(self, *_):
-        self.form_layout.setRowVisible(self.new_role, self.role.currentData() is self.NEW)
+        if self.tracked_task is None:
+            self.form_layout.setRowVisible(self.new_role, self.role.currentData() is self.NEW)
         self._mark_dirty()
 
     def _measure_changed(self, *_):
@@ -224,10 +249,10 @@ class CaptureWidget(QWidget):
     def _measurement_changed(self, *_):
         status = self.measurement_status.currentData()
         measured = status == "measured"
-        self.measure.setEnabled(measured)
-        self.quantity.setEnabled(measured)
+        self.form_layout.setRowVisible(self.measure, measured)
+        self.form_layout.setRowVisible(self.quantity, measured)
         self.form_layout.setRowVisible(self.new_measure, measured and self.measure.currentData() is self.NEW)
-        self.remind_on.setEnabled(status == "unknown")
+        self.form_layout.setRowVisible(self.remind_on, status == "unknown")
         self._mark_dirty()
 
     def _today_changed(self, checked):
@@ -238,12 +263,14 @@ class CaptureWidget(QWidget):
         role = self.role.currentData()
         measure = self.measure.currentData()
         status = self.measurement_status.currentData()
+        category = self.tracked_task["category"] if self.tracked_task is not None else self.category.currentData()
+        duty = self.tracked_task.get("duty") if self.tracked_task is not None else (None if role is self.NEW else role)
         return {
-            "category": self.category.currentData(),
+            "category": category,
             "outcome": self.outcome.toPlainText(),
             "completed_date": None if self.use_today.isChecked() else self.completed_date.date().toString("yyyy-MM-dd"),
-            "duty": None if role is self.NEW else role,
-            "new_duty": self.new_role.text().strip() if role is self.NEW else None,
+            "duty": duty,
+            "new_duty": self.new_role.text().strip() if self.tracked_task is None and role is self.NEW else None,
             "measurement_status": status,
             "measure": measure if status == "measured" and measure is not self.NEW else None,
             "new_measure": self.new_measure.text().strip() if status == "measured" and measure is self.NEW else None,
@@ -255,23 +282,30 @@ class CaptureWidget(QWidget):
     def show_preview(self):
         draft = self.draft()
         try:
-            self.service.preview_capture(draft)
+            if self.tracked_task is None:
+                self.service.preview_capture(draft)
+            else:
+                self.service.preview_completion(self.tracked_task, draft)
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status.setText(f"Check the draft: {exc}")
             return
         self._preview_draft = draft
         details = [
+            *([("Task", self.tracked_task["title"])] if self.tracked_task is not None else []),
             ("Category", draft["category"]),
             ("Role", draft["new_duty"] or draft["duty"] or "None"),
             ("Outcome", draft["outcome"].strip()),
             ("Completed", draft["completed_date"] or "Today, at time of save"),
-            ("Measurement", draft["measurement_status"].replace("_", " ")),
+            ("Can you put a number to this?", {
+                "measured": "Yes", "not_applicable": "No number needed",
+                "unknown": "I’ll add a number later",
+            }[draft["measurement_status"]]),
         ]
         if draft["measurement_status"] == "measured":
-            details.extend((("Unit", draft["new_measure"] or draft["measure"]),
-                            ("Quantity", draft["quantity"])))
+            details.extend((("What are you counting?", draft["new_measure"] or draft["measure"]),
+                            ("Amount", draft["quantity"])))
         if draft["remind_on"]:
-            details.append(("Reminder", draft["remind_on"]))
+            details.append(("When should Saga remind you?", draft["remind_on"]))
         details.append(("Flagged for review", "Yes" if draft["flagged"] else "No"))
         self.preview_text.setPlainText("\n".join(f"{label}: {value}" for label, value in details))
         self.form_group.setEnabled(False)
@@ -298,7 +332,10 @@ class CaptureWidget(QWidget):
         self._saving = True
         self.save_button.setEnabled(False)
         try:
-            result = self.service.save_capture(self._preview_draft)
+            if self.tracked_task is None:
+                result = self.service.save_capture(self._preview_draft)
+            else:
+                result = self.service.save_completion(self.tracked_task, self._preview_draft)
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status.setText(f"Could not save: {exc}. Your draft is still here.")
             self.save_button.setEnabled(True)
@@ -309,12 +346,15 @@ class CaptureWidget(QWidget):
         self._dirty = False
         self.edit_button.setEnabled(False)
         self.cancel_button.setEnabled(False)
-        self.new_button.show()
+        if self.tracked_task is None:
+            self.new_button.show()
         if result.export_error:
-            self.status.setText(f"Saved accomplishment #{result.completion_id}. Export failed: {result.export_error}. Retry export only.")
+            saved = "Task marked complete" if self.tracked_task is not None else f"Saved accomplishment #{result.completion_id}"
+            self.status.setText(f"{saved}. Export failed: {result.export_error}. Retry export only.")
             self.retry_button.show()
         else:
-            self.status.setText(f"Saved accomplishment #{result.completion_id}.")
+            self.status.setText("Task marked complete." if self.tracked_task is not None else
+                                f"Saved accomplishment #{result.completion_id}.")
         self.saved.emit()
 
     def retry_export(self):
@@ -326,7 +366,8 @@ class CaptureWidget(QWidget):
             self.status.setText(f"Accomplishment is saved. Export retry failed: {exc}")
             return
         self.retry_button.hide()
-        self.status.setText("Accomplishment is saved. Export completed.")
+        self.status.setText("Task is complete. Export completed." if self.tracked_task is not None else
+                            "Accomplishment is saved. Export completed.")
 
     def confirm_discard(self):
         if not self.has_unsaved_draft:
@@ -339,7 +380,9 @@ class CaptureWidget(QWidget):
         return answer == QMessageBox.StandardButton.Discard
 
     def cancel_draft(self):
-        if self.confirm_discard():
+        if self.tracked_task is not None:
+            self.window().close()
+        elif self.confirm_discard():
             self.reset_form()
 
     def reset_form(self):

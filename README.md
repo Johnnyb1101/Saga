@@ -178,12 +178,20 @@ environment, then launch from the checkout:
 ```
 
 The desktop shows overdue, due-today, upcoming, later, and undated tasks, plus
-due measurement follow-ups. **Add Task** offers **Something to do** (a task with
-an optional due date) and **Already done** (an accomplishment, including work
-you forgot to record earlier). Review each draft before saving. Switching
-between the two choices keeps both drafts. New roles, measurement units, and reminders
-save atomically with their entry. Task changes and reminder resolution
-remain available through the CLI during this first desktop milestone.
+due measurement follow-ups. Click any open task card in **Today** to view its
+details and **Mark complete**, including overdue, future, and undated tasks.
+The completion preserves the task's category, role, title, project and due date.
+Review the result before confirming; Today refreshes after completion.
+
+**Add Task** creates future work with an optional due date. Check **I’ve already
+finished this** to record completed work that was not already tracked, with a
+completion date of today or earlier. Switching the checkbox keeps both drafts.
+Both completion routes ask **Can you put a number to this?** Choose **Yes** to
+enter an amount and what you counted, **No number needed**, or **I’ll add a
+number later** with a reminder date. Relevant fields appear only when needed.
+New roles, counting names and reminders save atomically with the entry.
+Task editing, cancellation and reminder resolution remain available through
+the CLI.
 
 On first launch, **Get started** opens Saga's default archive in the Windows
 local application-data directory, creating it when needed. An existing default
