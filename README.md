@@ -1,7 +1,8 @@
 # Saga
 
-A personal operations database and morning-brief generator. SQLite, a small
-Python CLI, and no third-party runtime dependencies.
+A personal operations database and morning-brief generator. SQLite and a
+Python CLI with no third-party runtime dependencies, plus an optional Windows
+desktop interface powered by PySide6.
 
 ## The problem
 
@@ -88,12 +89,14 @@ The guided terminal interface covers daily capture, task selection, measurement
 follow-ups, review browsing, and accomplishment corrections. Export output
 can be configured with `SAGA_EXPORT_DIR` or an explicit `export --out` path.
 Guided project and recurring-series management is also available.
-A future graphical interface will use the same core functions.
+An optional Windows desktop preview provides Today and manual accomplishment
+capture through the same core functions. Assistant integration is planned.
 
 ## Requirements
 
 Python 3.14 with SQLite 3.37 or later. `sqlite3` is in the standard library;
-Ruff is an optional development tool, not a runtime requirement.
+Ruff is an optional development tool, not a runtime requirement. The desktop
+preview additionally requires the packages in `requirements-desktop.txt`.
 
 The SQLite floor is real: every table is declared `STRICT`, which arrived
 in 3.37. Check yours with:
@@ -136,6 +139,70 @@ and commits each migration only after checking its version. That local copy
 does not replace a separate-drive backup. To use another database, put
 `--db PATH` before the command. When exporting an alternate database, also
 use `--out DIR` to avoid overwriting the configured/default exports.
+
+### PowerShell command
+
+To use `saga` as a command in the current PowerShell session, dot-source the
+helper with the full path to this checkout:
+
+```powershell
+. 'C:\path\to\Saga\scripts\saga-profile.ps1'
+```
+
+Then run `saga` for the guided menu, or pass the same arguments you would pass
+to `main.py`, such as `saga today` or `saga add "Review packages"`. The helper
+uses this checkout's `.venv`, preserves your working directory (including how
+relative `--db` and `--out` paths resolve), and exposes Saga's exit code through
+`$LASTEXITCODE`. Missing interpreter or entry-point files produce an error.
+
+To load it for future sessions, create `$PROFILE` if it does not exist, then
+add that same dot-sourcing line manually to the profile, preserving its contents:
+
+```powershell
+if (!(Test-Path -LiteralPath $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force }
+```
+
+Moving the checkout requires updating the path in the profile and reloading the
+profile in the current shell. The helper itself does not edit your profile.
+
+### Windows desktop preview
+
+Install the optional desktop requirements in the existing Python 3.14 virtual
+environment, then launch from the checkout:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-desktop.txt
+.\.venv\Scripts\python.exe desktop.py
+```
+
+The desktop preview shows overdue, due-today, and upcoming tasks, plus due
+measurement follow-ups. Record an accomplishment through an editable form and
+review the draft before saving. New roles, measurement units, and reminders
+save atomically with the accomplishment. Task changes and reminder resolution
+remain available through the CLI during this first desktop milestone.
+
+On first launch, choose **Create archive** or **Open archive**. New archives
+default to Saga's Windows local application-data directory. Open the existing
+`data/saga.db` explicitly to use the same records as the CLI. The desktop does
+not move or copy it, and the CLI's default remains unchanged. Desktop settings
+remember the selected archive and its export folder locally; the archive path
+is visible in the interface. Older/newer schema versions are reported rather
+than migrated automatically. Keep the working database outside synced folders.
+
+Exports are configured per archive in the desktop. New archives use an
+archive-named folder beside the database, such as `saga-exports` for `saga.db`.
+For existing archives, select an export folder to enable automatic exports.
+The desktop passes that destination
+explicitly, so `SAGA_EXPORT_DIR` does not override desktop settings. Use a
+different folder for a demo or recovered archive. If export fails after saving,
+the accomplishment is already recorded: use **Retry export** rather than
+recording it again. Exports can also be disabled.
+
+This is a development preview, not a packaged installer. It makes no AI calls;
+provider setup and assistant chat are later milestones. PySide6 is optional for
+CLI use. Python 3.14 is the initial desktop runtime; a separate CI job checks
+Python 3.15 compatibility. Passing those tests does not verify installer
+packaging. Distribution must include the appropriate Qt license notices.
 
 ## Usage
 
@@ -755,6 +822,10 @@ On Windows, use a full absolute path such as `C:\SagaExports` or an ordinary
 relative path such as `synced-exports`; ambiguous `C:exports` and `\exports`
 environment paths are rejected.
 
+The repository ignores the `synced-exports/` example directory. Before using
+any other custom destination inside the checkout, add its directory to
+`.gitignore`; choosing a destination outside the checkout avoids that concern.
+
 For example, choose a destination and set it for the current PowerShell session:
 
 ```powershell
@@ -880,9 +951,12 @@ organizational data. The schema has no dedicated person fields, but titles,
 descriptions, outcomes, and correction reasons are free text. Keeping sensitive
 data out depends on what the operator enters; the schema cannot enforce it.
 
-`data/` and `exports/` are excluded from version control. That helps prevent
-accidental commits but is not a guarantee that sensitive text cannot be
-committed elsewhere. Demo data used in examples and tests is invented.
+`data/`, `exports/`, and the documented `synced-exports/` example directory are
+excluded from version control. Other custom export directories created inside
+the checkout need an ignore rule before use; an export directory outside the
+checkout avoids that concern. These exclusions help prevent accidental commits
+but do not guarantee that sensitive text cannot be committed elsewhere. Demo
+data used in examples and tests is invented.
 
 ## Development checks
 
@@ -900,6 +974,13 @@ available Python 3.14 patch for pushes and pull requests. The stable check
 name is `Tests and lint`. Dependabot checks weekly for updates to the pinned
 development tools and GitHub Actions; update pull requests use the same CI.
 Updates are reviewed and merged manually.
+
+The optional desktop tests run when PySide6 is installed; core-only environments
+skip those tests explicitly. The separate desktop CI jobs install the optional
+requirements and run the full suite on Python 3.14 and 3.15, with Qt's offscreen
+platform. These checks cover interactions and rendering setup, not native
+screen-reader behavior or installer packaging. Local desktop validation should
+also check keyboard navigation and layout at Windows display scaling settings.
 
 Merge enforcement requires a separate GitHub branch-protection setting;
 the workflow file alone does not block merging. After the first successful

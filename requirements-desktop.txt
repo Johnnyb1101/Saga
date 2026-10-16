@@ -1,0 +1,2 @@
+# Optional desktop interface; the CLI retains its standard-library-only runtime.
+PySide6==6.12.0
