@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from saga.desktop.capture import CaptureWidget
+from saga.desktop.categories import CategoryPicker
 
 
 class TaskWidget(QWidget):
@@ -42,7 +43,7 @@ class TaskWidget(QWidget):
         self.title = QLineEdit()
         self.title.setPlaceholderText("What needs to be done?")
         self.title.setAccessibleName("Task title")
-        self.category = QComboBox()
+        self.category = CategoryPicker(service)
         self.category.setAccessibleName("Category")
         self.role = QComboBox()
         self.role.setAccessibleName("Role or responsibility")
@@ -112,6 +113,7 @@ class TaskWidget(QWidget):
 
         self.title.textChanged.connect(self._mark_dirty)
         self.category.currentIndexChanged.connect(self._category_changed)
+        self.category.categoriesChanged.connect(self.refresh_categories)
         self.role.currentIndexChanged.connect(self._role_changed)
         self.new_role.textChanged.connect(self._mark_dirty)
         self.has_due_date.toggled.connect(self._due_date_changed)
@@ -128,21 +130,36 @@ class TaskWidget(QWidget):
 
     def reload_references(self):
         refs = self.service.references()
+        was_dirty = self._dirty
+        selected_category = self.category.currentData()
         self._roles_by_category = refs["roles"]
         self.category.blockSignals(True)
-        self.category.clear()
-        for name in refs["categories"]:
-            self.category.addItem(name, name)
+        self.category.set_categories(refs["categories"])
         self.category.blockSignals(False)
         self._category_changed()
+        self._dirty = was_dirty or (selected_category is not None and self.category.currentData() is None)
+        if selected_category is not None and self.category.currentData() is None:
+            self._preview_draft = None
+            if not self.preview_group.isHidden():
+                self.edit_draft()
+            self.status.setText("The selected category is no longer available. Choose another category to save this draft.")
+
+    def refresh_categories(self):
+        try:
+            self.reload_references()
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.status.setText(f"Category was saved, but the list could not refresh: {exc}")
 
     def _category_changed(self, *_):
+        selected_role = self.role.currentData()
         self.role.blockSignals(True)
         self.role.clear()
         self.role.addItem("No role assigned", None)
         for name in self._roles_by_category.get(self.category.currentData(), []):
             self.role.addItem(name, name)
         self.role.addItem("Add a new role…", self.NEW)
+        role_index = self.role.findData(selected_role)
+        self.role.setCurrentIndex(max(role_index, 0))
         self.role.blockSignals(False)
         self._role_changed()
         self._mark_dirty()
@@ -286,6 +303,8 @@ class AddTaskWidget(QWidget):
         self._service = service
         self.task = TaskWidget(service)
         self.completed = CaptureWidget(service)
+        self.task.category.categoriesChanged.connect(self.completed.refresh_categories)
+        self.completed.category.categoriesChanged.connect(self.task.refresh_categories)
 
         self.todo_button = QPushButton("Something to do")
         self.todo_button.setCheckable(True)
@@ -335,6 +354,8 @@ class AddTaskWidget(QWidget):
         self._service = value
         self.task.service = value
         self.completed.service = value
+        self.task.category.service = value
+        self.completed.category.service = value
 
     @property
     def has_unsaved_draft(self):

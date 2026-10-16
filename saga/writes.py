@@ -8,9 +8,61 @@ All SQL uses ? placeholders. Values are never formatted into a statement.
 
 import datetime as dt
 import math
+import sqlite3
 
 from saga.recurrence import occurrence_date
 from saga.roles import name_key
+
+
+def require_active_category(con, category):
+    row = con.execute("SELECT status FROM categories WHERE name=?", (category,)).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError(f"Unknown category: {category}")
+    if row['status'] != 'active':
+        raise ValueError(f"Category {category!r} is archived; choose an active category")
+
+
+def _category_name(name):
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("Category name must not be blank")
+    return name.strip()
+
+
+def create_category(con, name, counts_toward_review=True):
+    name = _category_name(name)
+    if not isinstance(counts_toward_review, bool):
+        raise TypeError("Review counting must be Yes or No")
+    key = name_key(name)
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        duplicate = con.execute("SELECT name FROM categories WHERE name_key=?", (key,)).fetchone()
+        if duplicate:
+            raise ValueError(f"Category {duplicate['name']!r} already exists")
+        con.execute("INSERT INTO categories(name,name_key,counts_toward_review) VALUES (?,?,?)",
+                    (name, key, int(counts_toward_review)))
+
+
+def set_category_status(con, name, archived):
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute("SELECT status FROM categories WHERE name=?", (name,)).fetchone()
+        if row is None:
+            raise ValueError("No such category")
+        target = 'archived' if archived else 'active'
+        if row['status'] == target:
+            raise ValueError(f"Category is already {target}")
+        con.execute("UPDATE categories SET status=? WHERE name=?", (target, name))
+
+
+def delete_category(con, name):
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        if not con.execute("SELECT 1 FROM categories WHERE name=?", (name,)).fetchone():
+            raise ValueError("No such category")
+        for table in ('category_roles', 'tasks', 'recurrences', 'completions'):
+            if con.execute(f"SELECT 1 FROM {table} WHERE category=? LIMIT 1", (name,)).fetchone():
+                raise ValueError("Category has roles, tasks, recurrences, or completion history; archive it instead")
+        con.execute("DELETE FROM categories WHERE name=?", (name,))
 
 
 def add_project(con, name, description=None, start_date=None, deadline=None):
@@ -35,9 +87,11 @@ def _require_project_accepts_tasks(con, project_id):
 
 
 def _insert_task(con, title, category, project_id, due_date, duty,
-                 recurrence_id=None, occurrence_index=None):
+                 recurrence_id=None, occurrence_index=None, allow_archived=False):
     """Insert within the caller's transaction, including recurrence advancement."""
     _require_project_accepts_tasks(con, project_id)
+    if not allow_archived:
+        require_active_category(con, category)
     require_role(con, category, duty)
     return con.execute(
         """INSERT INTO tasks (title, category, project_id, due_date, duty, recurrence_id, occurrence_index)
@@ -54,6 +108,9 @@ def add_task(con, title, category, project_id=None, due_date=None, duty=None,
     if repeat is not None:
         due_date = occurrence_date(due_date, repeat, interval, 0)
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
+        require_active_category(con, category)
         recurrence_id = None
         if repeat is not None:
             _require_project_accepts_tasks(con, project_id)
@@ -147,6 +204,7 @@ def add_measure(con, name):
     return name
 
 def _register_role(con, name, category):
+    require_active_category(con, category)
     key = name_key(name)
     if not key:
         raise ValueError("Role name must not be blank")
@@ -165,6 +223,8 @@ def _register_role(con, name, category):
 def add_duty(con, name, category):
     """Register a role in a category, or assign an unused legacy name explicitly."""
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
         _register_role(con, name, category)
     return name
 
@@ -309,6 +369,9 @@ def add_completion(con, category, outcome=None, measure=None, quantity=None,
                    flagged=False, completed_at=None, duty=None, measurement_status=None, remind_on=None):
     """Archive work that was never a task. Returns the completion id."""
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
+        require_active_category(con, category)
         cur = _insert_completion(con, None, category, outcome, measure,
                                  quantity, flagged, completed_at, duty,
                                  measurement_status=measurement_status, remind_on=remind_on)
@@ -342,7 +405,7 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
                 next_index = task["occurrence_index"] + 1
                 due = occurrence_date(series["anchor_date"], series["frequency"], series["interval"], next_index)
                 _insert_task(con, series["title"], series["category"], series["project_id"], due,
-                             series["duty"], series["id"], next_index)
+                             series["duty"], series["id"], next_index, allow_archived=True)
     return cur.lastrowid
 
 
@@ -352,9 +415,13 @@ def edit_task(con, task_id, title, category, duty, project_id):
         raise ValueError("Task title must not be blank")
     title = title.strip()
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
         task = con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         if task is None or task['status'] != 'open':
             raise ValueError("Only an existing open task can be edited")
+        if category != task['category']:
+            require_active_category(con, category)
         require_role(con, category, duty,
                      allow_inactive=(category, duty) == (task['category'], task['duty']))
         if project_id != task['project_id']:
@@ -462,6 +529,8 @@ def correct_completion(con, completion_id, reason, remind_on=None, **changes):
     if not changes or set(changes) - set(CORRECTION_FIELDS):
         raise ValueError("supply supported fields to correct")
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
         original = con.execute(
             "SELECT * FROM current_completions WHERE id = ?", (completion_id,)
         ).fetchone()
@@ -469,6 +538,8 @@ def correct_completion(con, completion_id, reason, remind_on=None, **changes):
             raise ValueError(f"Completion {completion_id} is missing or superseded; use completions/history to find its latest id.")
         values = dict(original)
         values.update(changes)
+        if values['category'] != original['category']:
+            require_active_category(con, values['category'])
         if 'measurement_status' not in changes and ('measure' in changes or 'quantity' in changes):
             values['measurement_status'] = None
         values['measurement_status'] = measurement_state(values['measure'], values['quantity'], values['measurement_status'])

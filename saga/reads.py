@@ -194,14 +194,15 @@ def upcoming_deadlines(con, days=30, on=None):
         (on, on, days),
     ).fetchall()
 
-def categories(con):
-    """All category names, the review-counting ones first."""
+def categories(con, active_only=False):
+    """Category names, including archived ones for historical callers by default."""
     return con.execute(
         """
-        SELECT name, counts_toward_review
+        SELECT name, counts_toward_review, status
         FROM categories
+        WHERE (?=0 OR status='active')
         ORDER BY counts_toward_review DESC, name
-        """
+        """, (int(active_only),)
     ).fetchall()
 
 def measures(con):

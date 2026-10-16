@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from saga.desktop.categories import CategoryPicker
+
 
 class CaptureWidget(QWidget):
     """Keep draft values in widgets until the user confirms a preview."""
@@ -34,7 +36,7 @@ class CaptureWidget(QWidget):
         self._saving = False
         self._preview_draft = None
 
-        self.category = QComboBox()
+        self.category = CategoryPicker(service)
         self.category.setAccessibleName("Category")
         self.role = QComboBox()
         self.role.setAccessibleName("Role or responsibility")
@@ -134,6 +136,7 @@ class CaptureWidget(QWidget):
         layout.addWidget(self.status)
 
         self.category.currentIndexChanged.connect(self._category_changed)
+        self.category.categoriesChanged.connect(self.refresh_categories)
         self.role.currentIndexChanged.connect(self._role_changed)
         self.measure.currentIndexChanged.connect(self._measure_changed)
         self.measurement_status.currentIndexChanged.connect(self._measurement_changed)
@@ -157,11 +160,12 @@ class CaptureWidget(QWidget):
 
     def reload_references(self):
         refs = self.service.references()
+        was_dirty = self._dirty
+        selected_category = self.category.currentData()
+        selected_measure = self.measure.currentData()
         self._roles_by_category = refs["roles"]
         self.category.blockSignals(True)
-        self.category.clear()
-        for name in refs["categories"]:
-            self.category.addItem(name, name)
+        self.category.set_categories(refs["categories"])
         self.category.blockSignals(False)
         self._category_changed()
         self.measure.blockSignals(True)
@@ -169,16 +173,33 @@ class CaptureWidget(QWidget):
         for name in refs["measures"]:
             self.measure.addItem(name, name)
         self.measure.addItem("Add a new unit…", self.NEW)
+        measure_index = self.measure.findData(selected_measure)
+        self.measure.setCurrentIndex(max(measure_index, 0))
         self.measure.blockSignals(False)
         self._measure_changed()
+        self._dirty = was_dirty or (selected_category is not None and self.category.currentData() is None)
+        if selected_category is not None and self.category.currentData() is None:
+            self._preview_draft = None
+            if not self.preview_group.isHidden():
+                self.edit_draft()
+            self.status.setText("The selected category is no longer available. Choose another category to save this draft.")
+
+    def refresh_categories(self):
+        try:
+            self.reload_references()
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.status.setText(f"Category was saved, but the list could not refresh: {exc}")
 
     def _category_changed(self, *_):
+        selected_role = self.role.currentData()
         self.role.blockSignals(True)
         self.role.clear()
         self.role.addItem("No role assigned", None)
         for name in self._roles_by_category.get(self.category.currentData(), []):
             self.role.addItem(name, name)
         self.role.addItem("Add a new role…", self.NEW)
+        role_index = self.role.findData(selected_role)
+        self.role.setCurrentIndex(max(role_index, 0))
         self.role.blockSignals(False)
         self._role_changed()
         self._mark_dirty()
@@ -257,6 +278,7 @@ class CaptureWidget(QWidget):
     def edit_draft(self):
         if self._committed:
             return
+        self._preview_draft = None
         self.preview_group.hide()
         self.form_group.show()
         self.form_group.setEnabled(True)

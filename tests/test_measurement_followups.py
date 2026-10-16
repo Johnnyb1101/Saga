@@ -289,5 +289,5 @@ class MeasurementMigrationTests(unittest.TestCase):
                     self.assertEqual(db.schema_version(con), 4)
                 script.write_text(original, encoding='utf-8')
                 db.migrate(path)
-            with contextlib.closing(db.connect(path)) as con:
+            with contextlib.closing(sqlite3.connect(path)) as con:
                 self.assertEqual(db.schema_version(con), 5)
