@@ -4,7 +4,6 @@ import sqlite3
 
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -312,15 +311,8 @@ class AddTaskWidget(QWidget):
         self.task.category.categoriesChanged.connect(self.completed.refresh_categories)
         self.completed.category.categoriesChanged.connect(self.task.refresh_categories)
 
-        self.todo_button = QPushButton("Something to do")
-        self.todo_button.setCheckable(True)
-        self.done_button = QPushButton("Already done")
-        self.done_button.setCheckable(True)
-        choices = QButtonGroup(self)
-        choices.setExclusive(True)
-        choices.addButton(self.todo_button)
-        choices.addButton(self.done_button)
-        self.todo_button.setChecked(True)
+        self.already_finished = QCheckBox("I’ve already finished this")
+        self.already_finished.setAccessibleName("I’ve already finished this")
 
         self.stack = QStackedWidget()
         for child in (self.task, self.completed):
@@ -329,8 +321,7 @@ class AddTaskWidget(QWidget):
             scroll.setFrameShape(QScrollArea.Shape.NoFrame)
             scroll.setWidget(child)
             self.stack.addWidget(scroll)
-        self.todo_button.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        self.done_button.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        self.already_finished.toggled.connect(self._switch_form)
         self.task.saved.connect(lambda: self._entry_saved(self.completed))
         self.completed.saved.connect(lambda: self._entry_saved(self.task))
 
@@ -338,11 +329,29 @@ class AddTaskWidget(QWidget):
         heading = QLabel("Add task")
         heading.setObjectName("addTaskTitle")
         layout.addWidget(heading)
-        choice_row = QHBoxLayout()
-        choice_row.addWidget(self.todo_button)
-        choice_row.addWidget(self.done_button)
-        layout.addLayout(choice_row)
+        layout.addWidget(self.already_finished)
         layout.addWidget(self.stack, 1)
+
+    def _switch_form(self, finished):
+        source, target = (self.task, self.completed) if finished else (self.completed, self.task)
+        if not target.has_unsaved_draft and not target._committed:
+            if finished and not target.outcome.toPlainText().strip() and source.title.text().strip():
+                target.outcome.setPlainText(source.title.text())
+            elif not finished and not target.title.text().strip() and source.outcome.toPlainText().strip():
+                target.title.setText(source.outcome.toPlainText().strip())
+            if source.category.currentData() is not None:
+                category_index = target.category.findData(source.category.currentData())
+                if category_index >= 0:
+                    target.category.setCurrentIndex(category_index)
+            role = source.new_role.text().strip() if source.role.currentData() is source.NEW else source.role.currentData()
+            if role and target.role.currentData() is None:
+                role_index = target.role.findData(role)
+                if role_index >= 0:
+                    target.role.setCurrentIndex(role_index)
+                else:
+                    target.role.setCurrentIndex(target.role.count() - 1)
+                    target.new_role.setText(role)
+        self.stack.setCurrentIndex(1 if finished else 0)
 
     def _entry_saved(self, other):
         # Share newly registered roles with an untouched form. Never replace a

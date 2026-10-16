@@ -1,10 +1,10 @@
-"""First-launch archive selection and the read-only Today desktop view."""
+"""Local startup, Today tasks, and desktop task completion."""
 
 import datetime as dt
 import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -28,6 +28,7 @@ from saga.application import ArchiveService, create_archive
 from saga.desktop.appearance import DESKTOP_STYLE, app_icon, heading
 from saga.desktop.backup_settings import BackupSettings
 from saga.desktop.backups import BackupController
+from saga.desktop.completion import CompletionDialog
 from saga.desktop.settings import SettingsStore, default_database
 from saga.desktop.task_entry import AddTaskWidget
 from saga.desktop.themes import ThemePicker, apply_theme
@@ -40,12 +41,25 @@ def _plain_label(text=""):
     return label
 
 
+class TaskCard(QPushButton):
+    """A keyboard-accessible task button sized to its wrapped child labels."""
+
+    def sizeHint(self):
+        return self.layout().sizeHint() if self.layout() else super().sizeHint()
+
+    def minimumSizeHint(self):
+        return self.layout().minimumSize() if self.layout() else super().minimumSizeHint()
+
+
 class TodaySection(QGroupBox):
     """Compact read-only cards that grow with their text."""
 
-    def __init__(self, title, fields, parent=None):
+    taskActivated = Signal(int)
+
+    def __init__(self, title, fields, parent=None, *, completable=True):
         super().__init__(title, parent)
         self.fields = fields
+        self.completable = completable
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.card_layout = QVBoxLayout(self)
         self.card_layout.setSpacing(8)
@@ -61,7 +75,12 @@ class TodaySection(QGroupBox):
             card.deleteLater()
         self.cards = []
         for row in rows:
-            card = QWidget()
+            clickable = self.completable and row.get('id') is not None
+            card = TaskCard() if clickable else QWidget()
+            if clickable:
+                card.setCursor(Qt.CursorShape.PointingHandCursor)
+                card.setToolTip('Open task to mark it complete')
+                card.clicked.connect(lambda checked=False, task_id=row['id']: self.taskActivated.emit(task_id))
             card.setObjectName('taskCard')
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
             layout = QVBoxLayout(card)
@@ -72,6 +91,8 @@ class TodaySection(QGroupBox):
             card.title_label.setObjectName('cardTitle')
             heading(card.title_label, 1)
             card.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            if clickable:
+                card.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             details = []
             for label, key in self.fields:
                 value = row.get(key)
@@ -90,6 +111,8 @@ class TodaySection(QGroupBox):
             card.details_label.setParent(card)
             card.details_label.setObjectName('cardDetails')
             card.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            if clickable:
+                card.details_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             card.setAccessibleName(title)
             card.setAccessibleDescription(card.details_label.text())
             layout.addWidget(card.title_label)
@@ -186,6 +209,7 @@ class MainWindow(QMainWindow):
         refresh_button.clicked.connect(self.refresh_today)
         toolbar.addWidget(refresh_button)
         today_layout.addLayout(toolbar)
+        today_layout.addWidget(_plain_label('Click a task to view its details and mark it complete.'))
         self.today_error = _plain_label()
         self.today_error.setObjectName("todayError")
         today_layout.addWidget(self.today_error)
@@ -199,9 +223,10 @@ class MainWindow(QMainWindow):
             "due_soon": TodaySection("Upcoming", (("Due", "due_date"), ("Task", "title"), ("Category", "category"), ("Role", "duty"))),
             "later": TodaySection("Later", (("Due", "due_date"), ("Task", "title"), ("Category", "category"), ("Role", "duty"))),
             "undated": TodaySection("No due date", (("Task", "title"), ("Category", "category"), ("Role", "duty"))),
-            "followups": TodaySection("Due measurement follow-ups", (("Remind on", "remind_on"), ("Outcome", "outcome"), ("Category", "category"), ("Role", "duty"))),
+            "followups": TodaySection("Due measurement follow-ups", (("Remind on", "remind_on"), ("Outcome", "outcome"), ("Category", "category"), ("Role", "duty")), completable=False),
         }
         for section in self.sections.values():
+            section.taskActivated.connect(self._open_task)
             body_layout.addWidget(section)
         body_layout.addStretch()
         scroll.setWidget(body)
@@ -297,6 +322,26 @@ class MainWindow(QMainWindow):
         self.setup_error.clear()
         self.pages.setCurrentWidget(self.archive_page)
         self.refresh_today()
+
+    def _open_task(self, task_id):
+        if self.service is None:
+            return
+        try:
+            dialog = CompletionDialog(self.service, task_id, self)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.refresh_today()
+            self.today_error.setText(f'Could not open this task: {exc}')
+            return
+        dialog.saved.connect(self._completion_saved)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def _completion_saved(self):
+        self.refresh_today()
+        if self.entry is not None:
+            self.entry.task.refresh_categories()
+            self.entry.completed.refresh_categories()
+        self.backup_controller.request_backup()
 
     def refresh_today(self):
         if self.service is None:

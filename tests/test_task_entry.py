@@ -119,15 +119,15 @@ class TaskEntryTests(unittest.TestCase):
     def test_modes_preserve_both_drafts_and_discard_is_all_or_nothing(self):
         task = self.widget.task
         completed = self.widget.completed
-        self.assertTrue(self.widget.todo_button.isChecked())
+        self.assertFalse(self.widget.already_finished.isChecked())
         task.title.setText("Invented future work")
-        self.widget.done_button.click()
+        self.widget.already_finished.setChecked(True)
         completed.outcome.setPlainText("Invented completed work")
         completed.use_today.setChecked(False)
         completed.completed_date.setDate(QDate(2026, 9, 1))
-        self.widget.todo_button.click()
+        self.widget.already_finished.setChecked(False)
         self.assertEqual(task.title.text(), "Invented future work")
-        self.widget.done_button.click()
+        self.widget.already_finished.setChecked(True)
         self.assertEqual(completed.outcome.toPlainText(), "Invented completed work")
         self.assertEqual(completed.draft()["completed_date"], "2026-09-01")
         self.assertTrue(self.widget.has_unsaved_draft)
