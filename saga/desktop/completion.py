@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
 )
 
 from saga.desktop.capture import CaptureWidget
+from saga.desktop.due_date import DueDateDialog
+from saga.desktop.stop_repeating import StopRepeatingDialog
 
 
 class CompletionDialog(QDialog):
@@ -26,6 +28,16 @@ class CompletionDialog(QDialog):
         self.form.cancel_button.hide()
         self.form.saved.connect(self.saved.emit)
         layout = QVBoxLayout(self)
+        self.change_due_button = QPushButton('Change due date')
+        self.change_due_button.clicked.connect(self.change_due_date)
+        self.form.saved.connect(lambda: self.change_due_button.setEnabled(False))
+        layout.addWidget(self.change_due_button)
+        self.series = service.recurrence_details(task_id) if self.task.get('recurrence_id') is not None else None
+        self.stop_repeat_button = QPushButton('Stop repeating permanently')
+        self.stop_repeat_button.setVisible(self.series is not None and self.series['status'] == 'active')
+        self.stop_repeat_button.clicked.connect(self.stop_repeating)
+        self.form.saved.connect(lambda: self.stop_repeat_button.setEnabled(False))
+        layout.addWidget(self.stop_repeat_button)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setWidget(self.form)
@@ -36,6 +48,26 @@ class CompletionDialog(QDialog):
         screen = QApplication.primaryScreen().availableGeometry()
         self.setMaximumSize(max(1, screen.width() - 40), max(1, screen.height() - 40))
         self.resize(min(720, self.maximumWidth()), min(720, self.maximumHeight()))
+
+    def change_due_date(self):
+        if not self.form.confirm_discard():
+            return
+        dialog = DueDateDialog(self.form.service, self.task, self)
+        dialog.exec()
+        if dialog.result_saved:
+            self.saved.emit()
+            self.accept()
+        dialog.deleteLater()
+
+    def stop_repeating(self):
+        if self.series is None or not self.form.confirm_discard():
+            return
+        dialog = StopRepeatingDialog(self.form.service, self.task, self.series, self)
+        dialog.exec()
+        if dialog.result_saved:
+            self.saved.emit()
+            self.accept()
+        dialog.deleteLater()
 
     def reject(self):
         if not self.form.confirm_discard():

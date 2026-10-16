@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -60,6 +61,14 @@ class TaskWidget(QWidget):
         self.due_date.setDisplayFormat("yyyy-MM-dd")
         self.due_date.setAccessibleName("Due date")
         self.due_date.setEnabled(False)
+        self.repeat_task = QCheckBox('Repeat this task')
+        self.repeat_frequency = QComboBox()
+        for label, value in (('Daily', 'daily'), ('Weekly', 'weekly'), ('Monthly', 'monthly')):
+            self.repeat_frequency.addItem(label, value)
+        self.repeat_frequency.setAccessibleName('Repeat schedule')
+        self.repeat_interval = QSpinBox()
+        self.repeat_interval.setRange(1, 999)
+        self.repeat_interval.setAccessibleName('Repeat every how many days, weeks, or months')
 
         form = QFormLayout()
         form.addRow("Task", self.title)
@@ -69,6 +78,11 @@ class TaskWidget(QWidget):
         form.addRow("Role name", self.new_role)
         form.addRow("Due date", self.has_due_date)
         form.addRow("Choose date", self.due_date)
+        form.addRow(self.repeat_task)
+        form.addRow('Repeat', self.repeat_frequency)
+        form.addRow('Every (days, weeks, or months)', self.repeat_interval)
+        form.setRowVisible(self.repeat_frequency, False)
+        form.setRowVisible(self.repeat_interval, False)
         self.form_layout = form
         self.form_group = QGroupBox("Something to do")
         self.form_group.setLayout(form)
@@ -123,6 +137,9 @@ class TaskWidget(QWidget):
         self.new_role.textChanged.connect(self._mark_dirty)
         self.has_due_date.toggled.connect(self._due_date_changed)
         self.due_date.dateChanged.connect(self._mark_dirty)
+        self.repeat_task.toggled.connect(self._repeat_changed)
+        self.repeat_frequency.currentIndexChanged.connect(self._mark_dirty)
+        self.repeat_interval.valueChanged.connect(self._mark_dirty)
         self.reload_references()
         self._dirty = False
 
@@ -174,18 +191,32 @@ class TaskWidget(QWidget):
         self._mark_dirty()
 
     def _due_date_changed(self, checked):
+        if self.repeat_task.isChecked() and not checked:
+            self.has_due_date.setChecked(True)
+            return
         self.due_date.setEnabled(checked)
+        self._mark_dirty()
+
+    def _repeat_changed(self, checked):
+        self.form_layout.setRowVisible(self.repeat_frequency, checked)
+        self.form_layout.setRowVisible(self.repeat_interval, checked)
+        if checked:
+            self.has_due_date.setChecked(True)
+        self.has_due_date.setEnabled(not checked)
         self._mark_dirty()
 
     def draft(self):
         role = self.role.currentData()
-        return {
+        draft = {
             "title": self.title.text(),
             "category": self.category.currentData(),
             "duty": None if role is self.NEW else role,
             "new_duty": self.new_role.text().strip() if role is self.NEW else None,
             "due_date": self.due_date.date().toString("yyyy-MM-dd") if self.has_due_date.isChecked() else None,
         }
+        if self.repeat_task.isChecked():
+            draft.update(repeat=self.repeat_frequency.currentData(), interval=self.repeat_interval.value())
+        return draft
 
     def show_preview(self):
         draft = self.draft()
@@ -202,6 +233,11 @@ class TaskWidget(QWidget):
             ("Due", draft["due_date"] or "No due date"),
         )
         self.preview_text.setPlainText("\n".join(f"{label}: {value}" for label, value in details))
+        if draft.get('repeat'):
+            unit = {'daily': 'day', 'weekly': 'week', 'monthly': 'month'}[draft['repeat']]
+            number = draft['interval']
+            self.preview_text.appendPlainText(f"Repeat: Every {number} {unit}{'s' if number != 1 else ''}")
+            self.preview_text.appendPlainText('Completing this task creates the next occurrence.')
         self.form_group.setEnabled(False)
         self.form_group.hide()
         self.preview_button.hide()
@@ -291,6 +327,9 @@ class TaskWidget(QWidget):
         self.category.setCurrentIndex(0)
         self.role.setCurrentIndex(0)
         self.new_role.clear()
+        self.repeat_task.setChecked(False)
+        self.repeat_frequency.setCurrentIndex(0)
+        self.repeat_interval.setValue(1)
         self.has_due_date.setChecked(False)
         self.due_date.setDate(QDate.currentDate())
         self.status.clear()
