@@ -20,6 +20,23 @@ def _validate_theme(theme):
         raise ValueError('Theme accent must be teal, blue, magenta, or purple')
 
 
+def _validate_backups(backups):
+    if not isinstance(backups, dict):
+        raise ValueError('Saved backup settings must be a mapping')  # noqa: TRY004 - malformed JSON data
+    for database, backup in backups.items():
+        if not isinstance(database, str) or not Path(database).is_absolute():
+            raise ValueError('Saved backup archive paths must be absolute')
+        if not isinstance(backup, dict) or set(backup) != {'enabled', 'directory'}:
+            raise ValueError('Saved backup settings must contain enabled and directory')
+        if type(backup['enabled']) is not bool:
+            raise ValueError('Backup enabled must be true or false')
+        directory = backup['directory']
+        if directory is not None and (not isinstance(directory, str) or not Path(directory).is_absolute()):
+            raise ValueError('Saved backup directory must be absolute')
+        if backup['enabled'] and directory is None:
+            raise ValueError('Enabled backups require a directory')
+
+
 def data_directory():
     # The application name is also fixed by the entry point. AppLocalDataLocation
     # avoids Windows roaming storage and does not depend on the working directory.
@@ -57,6 +74,9 @@ class SettingsStore:
         if 'theme' in settings:
             _validate_theme(settings['theme'])
             result['theme'] = settings['theme']
+        if 'backups' in settings:
+            _validate_backups(settings['backups'])
+            result['backups'] = settings['backups']
         return result
 
     def select(self, database, export_dir):
@@ -68,6 +88,20 @@ class SettingsStore:
 
     def theme(self):
         return self.load().get('theme', {'mode': 'system', 'accent': 'teal'})
+
+    def backup_for(self, database):
+        return self.load().get('backups', {}).get(
+            str(Path(database).resolve()), {'enabled': False, 'directory': None})
+
+    def set_backup(self, database, enabled, directory=None):
+        database = str(Path(database).resolve())
+        backup = {'enabled': enabled, 'directory': str(directory) if directory is not None else None}
+        _validate_backups({database: backup})
+        if directory is not None:
+            backup['directory'] = str(Path(directory).resolve())
+        settings = self.load()
+        settings.setdefault('backups', {})[database] = backup
+        self._save(settings)
 
     def set_theme(self, mode, accent):
         theme = {'mode': mode, 'accent': accent}

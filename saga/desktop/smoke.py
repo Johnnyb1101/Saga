@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, qVersion
 
-from saga import db, export
+from saga import db, export, scheduled_backup
 from saga.application import ArchiveService, create_archive
 from saga.desktop.settings import SettingsStore
 from saga.desktop.window import MainWindow
@@ -79,15 +79,25 @@ def run_smoke(app, report_path):
                 raise RuntimeError('Unused category deletion export failed')
             if any(row['name'] == 'Unused smoke category' for row in service.category_options()):
                 raise RuntimeError('Unused category was not deleted')
+            snapshot, _ = scheduled_backup.run(database, root / 'backups', keep=30)
+            with closing(db.connect(snapshot)) as restored:
+                if (len(restored.execute('SELECT id FROM tasks').fetchall()) != 1
+                        or len(restored.execute('SELECT id FROM completions').fetchall()) != 1):
+                    raise RuntimeError('Verified backup did not preserve the disposable archive')
+            if not database.is_file():
+                raise RuntimeError('Backing up moved the working archive')
             report["checks"][step] = True
 
             step = "settings_roundtrip"
             store = SettingsStore(root / "settings" / "settings.json")
             store.select(database, root / "exports")
             store.set_theme('dark', 'magenta')
+            store.set_backup(database, False, root / 'backups')
             reopened = SettingsStore(store.path)
             if (reopened.load()["database"] != str(database.resolve())
-                    or reopened.export_for(database) != (root / "exports").resolve()):
+                    or reopened.export_for(database) != (root / "exports").resolve()
+                    or reopened.backup_for(database) != {
+                        'enabled': False, 'directory': str((root / 'backups').resolve())}):
                 raise RuntimeError("Selected archive and export folder did not persist")
             report["checks"][step] = True
 
