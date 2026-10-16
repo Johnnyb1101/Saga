@@ -185,13 +185,17 @@ between the two choices keeps both drafts. New roles, measurement units, and rem
 save atomically with their entry. Task changes and reminder resolution
 remain available through the CLI during this first desktop milestone.
 
-On first launch, choose **Create archive** or **Open archive**. New archives
-default to Saga's Windows local application-data directory. Open the existing
-`data/saga.db` explicitly to use the same records as the CLI. The desktop does
-not move or copy it, and the CLI's default remains unchanged. Desktop settings
-remember the selected archive and its export folder locally; the archive path
-is visible in the interface. Older/newer schema versions are reported rather
-than migrated automatically. Keep the working database outside synced folders.
+On first launch, **Get started** opens Saga's default archive in the Windows
+local application-data directory, creating it when needed. An existing default
+archive is opened and validated; it is never overwritten. Choose **Open existing
+Saga archive** to use another archive, such as `data/saga.db` for the same
+records as the CLI. The first screen has no folder picker. Archive location,
+export settings, and controls to create or change archives are under the
+collapsed **Settings → Advanced** section. The desktop does not move or copy
+archives, and the CLI's default remains unchanged. Desktop settings remember
+the selected archive and its export folder locally. Older/newer schema versions
+are reported rather than migrated automatically. Keep the working database
+outside synced folders.
 
 Exports are configured per archive in the desktop. New archives use an
 archive-named folder beside the database, such as `saga-exports` for `saga.db`.
@@ -201,6 +205,19 @@ explicitly, so `SAGA_EXPORT_DIR` does not override desktop settings. Use a
 different folder for a demo or recovered archive. If export fails after saving,
 the accomplishment is already recorded: use **Retry export** rather than
 recording it again. Exports can also be disabled.
+
+### Optional OneDrive backups in the desktop
+
+Desktop **Settings → Back up to OneDrive** is off by default. When enabled, Saga
+suggests `SagaBackups` under an existing OneDrive folder it detects, or you can
+choose a backup folder. Saga keeps the working archive local and saves verified
+snapshots to that folder while open: at startup, after saved entries or category
+changes settle, and every 15 minutes. Saga keeps the latest 30 successful
+backups for each archive. This setting does not create
+an operating-system schedule. **Back up now** starts a manual snapshot. If a
+backup fails, Saga shows the failure and keeps the saved entries; OneDrive
+uploads files independently, so Saga cannot confirm cloud sync. These snapshots
+are file backups, not a live multi-device database.
 
 The desktop makes no AI calls;
 provider setup and assistant chat are later milestones. PySide6 is optional for
@@ -796,7 +813,11 @@ does not replace the default database or change the morning task's path.
 If a backup predates a schema upgrade, run `migrate` against the recovered
 copy first, using the same `--db` option.
 
-### Scheduled backups
+### CLI scheduled backups
+
+This is a separate option for making backups when Saga is closed. It uses the
+command line and a Windows scheduled task; enabling desktop OneDrive backups
+does not install or change this task.
 
 The noninteractive runner creates a snapshot, restores it into a temporary
 local directory, checks integrity and foreign keys, and exercises task,

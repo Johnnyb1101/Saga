@@ -4,7 +4,7 @@ import datetime as dt
 import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -20,12 +19,15 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from saga.application import ArchiveService, create_archive
 from saga.desktop.appearance import DESKTOP_STYLE, app_icon, heading
+from saga.desktop.backup_settings import BackupSettings
+from saga.desktop.backups import BackupController
 from saga.desktop.settings import SettingsStore, default_database
 from saga.desktop.task_entry import AddTaskWidget
 from saga.desktop.themes import ThemePicker, apply_theme
@@ -112,6 +114,9 @@ class MainWindow(QMainWindow):
         self.service = None
         self.capture = None
         self.entry = None
+        self.backup_controller = BackupController(self.settings_store, self)
+        self.backup_controller.statusChanged.connect(self._backup_status_changed)
+        self._saved_database_path = None
         self.pages = QStackedWidget()
         self.setCentralWidget(self.pages)
         self._build_setup()
@@ -122,6 +127,7 @@ class MainWindow(QMainWindow):
             apply_theme(self, **self.theme)
             selected = self.settings_store.load()["database"]
             if selected:
+                self._saved_database_path = Path(selected)
                 self._activate_archive(Path(selected), persist=False)
         except (ValueError, OSError, sqlite3.Error) as exc:
             self._show_setup_error(f"Could not open the saved archive: {exc}")
@@ -129,29 +135,23 @@ class MainWindow(QMainWindow):
     def _build_setup(self):
         self.setup_page = QWidget()
         layout = QVBoxLayout(self.setup_page)
-        title = _plain_label("Choose your Saga archive")
+        title = _plain_label("Welcome to Saga")
         title.setObjectName("setupTitle")
         heading(title, 5)
         layout.addWidget(title)
         layout.addWidget(_plain_label(
-            "Create a local archive or open an existing Saga database. "
-            "Opening an archive does not move or copy it."
+            "Your records stay on this computer. Get started with your own local Saga."
         ))
-        self.new_path = QLineEdit(str(default_database()))
-        self.new_path.setAccessibleName("New archive location")
-        path_row = QHBoxLayout()
-        path_row.addWidget(self.new_path)
-        browse = QPushButton("Choose location…")
-        browse.clicked.connect(self._browse_new)
-        path_row.addWidget(browse)
-        layout.addLayout(path_row)
-        create = QPushButton("Create new archive")
-        create.clicked.connect(self._create_selected)
-        open_existing = QPushButton("Open existing archive…")
+        self.get_started_button = QPushButton("Get started")
+        self.get_started_button.setProperty("primary", True)
+        self.get_started_button.setMinimumHeight(44)
+        self.get_started_button.clicked.connect(self.get_started)
+        open_existing = QPushButton("Open existing Saga archive…")
+        open_existing.setFlat(True)
         open_existing.clicked.connect(self._browse_existing)
-        layout.addWidget(create)
+        layout.addWidget(self.get_started_button)
         layout.addWidget(open_existing)
-        settings_button = QPushButton('Appearance settings')
+        settings_button = QPushButton('Settings')
         settings_button.clicked.connect(self.show_settings)
         layout.addWidget(settings_button)
         self.setup_error = _plain_label()
@@ -165,12 +165,16 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(self.archive_page)
         top = QHBoxLayout()
         self.archive_label = _plain_label()
-        self.archive_label.setAccessibleName("Selected archive")
+        self.archive_label.setAccessibleName("Your Saga")
         top.addWidget(self.archive_label, 1)
         settings_button = QPushButton("Settings")
         settings_button.clicked.connect(self.show_settings)
         top.addWidget(settings_button)
         layout.addLayout(top)
+        self.backup_status = _plain_label()
+        self.backup_status.setObjectName("backupStatus")
+        self.backup_status.hide()
+        layout.addWidget(self.backup_status)
         self.tabs = QTabWidget()
         self.today_page = QWidget()
         today_layout = QVBoxLayout(self.today_page)
@@ -211,16 +215,29 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.setup_page)
 
     def _browse_new(self):
-        path, _ = QFileDialog.getSaveFileName(self, "New Saga archive", self.new_path.text(), "SQLite database (*.db)")
-        if path:
-            self.new_path.setText(path)
-
-    def _create_selected(self):
-        path = self.new_path.text().strip()
-        if not path:
-            self._show_setup_error("Choose a location for the new archive.")
+        if self.entry is not None and not self.entry.confirm_discard():
             return
-        self.create_new_archive(Path(path))
+        path, _ = QFileDialog.getSaveFileName(self, "New Saga archive", str(default_database()), "SQLite database (*.db)")
+        if path:
+            self.create_new_archive(Path(path))
+
+    def get_started(self):
+        """Open the remembered archive, or create the local default once."""
+        try:
+            selected = self.settings_store.load()["database"]
+            database = Path(selected) if selected else default_database()
+            if database.exists():
+                if selected:
+                    self._activate_archive(database, persist=False)
+                else:
+                    self._activate_archive(
+                        database, export_dir=database.parent / f"{database.stem}-exports")
+            else:
+                if selected:
+                    raise ValueError("The saved archive is missing. Choose an existing archive in Settings.")
+                self.create_new_archive(database)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self._show_setup_error(f"Could not open your Saga: {exc}")
 
     def create_new_archive(self, path):
         """Create at an explicit path and enable exports in a sibling folder."""
@@ -258,6 +275,8 @@ class MainWindow(QMainWindow):
         if persist:
             self.settings_store.select(database, export_dir)
         self.service = service
+        self._saved_database_path = database
+        self.backup_controller.configure(database)
         if self.entry is not None:
             index = self.tabs.indexOf(self.entry)
             self.tabs.removeTab(index)
@@ -269,9 +288,12 @@ class MainWindow(QMainWindow):
             for form in (self.entry.task, self.entry.completed):
                 form.status.setText("This archive has no categories available for new entries.")
         self.entry.saved.connect(self.refresh_today)
+        self.entry.saved.connect(self.backup_controller.request_backup)
+        self.entry.task.category.categoriesChanged.connect(self.backup_controller.request_backup)
+        self.entry.completed.category.categoriesChanged.connect(self.backup_controller.request_backup)
         self.tabs.addTab(self.entry, "Add Task")
         self.tabs.setCurrentWidget(self.today_page)
-        self.archive_label.setText(f"Archive: {database}")
+        self.archive_label.setText("Your Saga")
         self.setup_error.clear()
         self.pages.setCurrentWidget(self.archive_page)
         self.refresh_today()
@@ -305,6 +327,10 @@ class MainWindow(QMainWindow):
         if self.theme['mode'] == 'system':
             apply_theme(self, **self.theme)
 
+    def _backup_status_changed(self, message):
+        self.backup_status.setText(message if message != 'Backups are off' else '')
+        self.backup_status.setVisible(message != 'Backups are off' and bool(message))
+
     def _save_theme(self, choice):
         try:
             self.settings_store.set_theme(**choice)
@@ -319,23 +345,42 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Saga settings")
         layout = QVBoxLayout(dialog)
-        layout.addWidget(ThemePicker(self.theme, self._save_theme, dialog))
-        if self.service is None:
-            close_button = QPushButton('Close')
-            close_button.clicked.connect(dialog.accept)
-            layout.addWidget(close_button)
-            return dialog
-        layout.addWidget(_plain_label(f"Archive: {self.service.database}"))
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QWidget(scroll)
+        content.setMinimumWidth(0)
+        content_layout = QVBoxLayout(content)
+        content_layout.addWidget(ThemePicker(self.theme, self._save_theme, content))
+        content_layout.addWidget(BackupSettings(self.settings_store,
+                                               self.service.database if self.service else None,
+                                               self.backup_controller, content))
+        dialog.advanced_toggle = QToolButton(content)
+        dialog.advanced_toggle.setText("Advanced")
+        dialog.advanced_toggle.setCheckable(True)
+        dialog.advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        dialog.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        advanced = QWidget(content)
+        advanced.setVisible(False)
+        dialog.advanced_toggle.toggled.connect(advanced.setVisible)
+        dialog.advanced_toggle.toggled.connect(
+            lambda checked: dialog.advanced_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow))
+        advanced_layout = QVBoxLayout(advanced)
+        if self.service is not None:
+            advanced_layout.addWidget(_plain_label(f"Archive: {self.service.database}"))
         export_label = _plain_label()
-        layout.addWidget(export_label)
+        advanced_layout.addWidget(export_label)
 
         def update_export_label():
-            path = self.service.export_dir
+            path = self.service.export_dir if self.service else None
             export_label.setText(f"Exports: {path}" if path else "Exports: disabled")
 
         update_export_label()
 
         def choose_export():
+            if self.service is None:
+                return
             current = str(self.service.export_dir or self.service.database.parent)
             chosen = QFileDialog.getExistingDirectory(dialog, "Choose export folder", current)
             if chosen and self._set_export(Path(chosen)):
@@ -349,16 +394,49 @@ class MainWindow(QMainWindow):
             dialog.accept()
             self._browse_existing()
 
+        def create_archive_elsewhere():
+            dialog.accept()
+            self._browse_new()
+
         choose_button = QPushButton("Choose export folder…")
         choose_button.clicked.connect(choose_export)
+        choose_button.setEnabled(self.service is not None)
         disable_button = QPushButton("Disable exports")
         disable_button.clicked.connect(disable_export)
+        disable_button.setEnabled(self.service is not None)
         change_button = QPushButton("Change archive…")
         change_button.clicked.connect(change_archive)
+        create_button = QPushButton("Create archive in another location…")
+        create_button.clicked.connect(create_archive_elsewhere)
         close_button = QPushButton("Close")
         close_button.clicked.connect(dialog.accept)
-        for button in (choose_button, disable_button, change_button, close_button):
-            layout.addWidget(button)
+        for button in (choose_button, disable_button, change_button, create_button):
+            advanced_layout.addWidget(button)
+        content_layout.addWidget(dialog.advanced_toggle)
+        content_layout.addWidget(advanced)
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+        layout.addWidget(close_button)
+
+        available = dialog.screen().availableGeometry()
+        width = min(560, max(300, int(available.width() * 0.9)))
+        height_limit = max(240, int(available.height() * 0.85))
+        dialog.resize(width, min(460, height_limit))
+
+        def fit_height():
+            content_layout.invalidate()
+            content_layout.activate()
+            inner_width = scroll.viewport().width()
+            content_height = content_layout.heightForWidth(inner_width)
+            if content_height < 0:
+                content_height = content_layout.sizeHint().height()
+            chrome_height = layout.contentsMargins().top() + layout.contentsMargins().bottom()
+            chrome_height += layout.spacing() + close_button.sizeHint().height() + 8
+            dialog.resize(dialog.width(), min(height_limit, content_height + chrome_height))
+
+        dialog.advanced_toggle.toggled.connect(lambda _: QTimer.singleShot(0, fit_height))
+        QTimer.singleShot(0, fit_height)
         return dialog
 
     def show_settings(self):
@@ -370,4 +448,5 @@ class MainWindow(QMainWindow):
         if self.entry is not None and not self.entry.confirm_discard():
             event.ignore()
             return
+        self.backup_controller.shutdown()
         event.accept()
