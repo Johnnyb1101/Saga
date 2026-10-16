@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from saga import db, export, reads, writes
+from saga.recurrence import occurrence_date
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,19 @@ def _completion_evidence(draft):
     }, new_measure
 
 
+def _repeat_label(series):
+    if series is None:
+        return None
+    frequency = series['frequency']
+    interval = series['interval']
+    if interval == 1:
+        schedule = f'Repeats {frequency}'
+    else:
+        unit = {'daily': 'days', 'weekly': 'weeks', 'monthly': 'months'}[frequency]
+        schedule = f'Every {interval} {unit}'
+    return schedule if series['status'] == 'active' else f'Stopped: {schedule}'
+
+
 class ArchiveService:
     """Each operation owns a connection; no connections escape to widgets."""
 
@@ -111,14 +125,21 @@ class ArchiveService:
             # Keep all sections on the same date and SQLite snapshot.
             con.execute('BEGIN')
             open_tasks = [dict(row) for row in reads.open_tasks(con)]
+            series = {row['id']: row for row in con.execute(
+                'SELECT id, frequency, interval, status FROM recurrences')}
+
+            def labeled(rows):
+                return [{**dict(row), 'repeat_label': _repeat_label(
+                    series.get(row['recurrence_id']))} for row in rows]
+
             return {
                 'date': day,
-                'overdue': [dict(row) for row in reads.overdue(con, on=day)],
-                'due_today': [dict(row) for row in reads.due_today(con, on=day)],
-                'due_soon': [dict(row) for row in reads.due_soon(con, days=14, on=day)],
-                'later': [task for task in open_tasks
-                          if task['due_date'] is not None and task['due_date'] > later_boundary],
-                'undated': [task for task in open_tasks if task['due_date'] is None],
+                'overdue': labeled(reads.overdue(con, on=day)),
+                'due_today': labeled(reads.due_today(con, on=day)),
+                'due_soon': labeled(reads.due_soon(con, days=14, on=day)),
+                'later': labeled(task for task in open_tasks
+                                 if task['due_date'] is not None and task['due_date'] > later_boundary),
+                'undated': labeled(task for task in open_tasks if task['due_date'] is None),
                 'followups': [dict(row) for row in reads.measurement_followups(con, due_only=True, on=day)],
             }
 
@@ -186,15 +207,25 @@ class ArchiveService:
                 raise ValueError("Due date must use YYYY-MM-DD") from None
             if parsed.isoformat() != due_date:
                 raise ValueError("Due date must use YYYY-MM-DD")
+        repeat = draft.get('repeat')
+        interval = draft.get('interval', 1)
+        if repeat is None:
+            if interval != 1 or type(interval) is not int:
+                raise ValueError("Interval requires a repeat schedule")
+        else:
+            occurrence_date(due_date, repeat, interval, 0)
         with closing(db.connect(self.database)) as con:
             if category not in [row['name'] for row in reads.categories(con, active_only=True)]:
                 raise ValueError(f"Unknown category: {category}")
             writes.require_role(con, category, duty)
-        return {
+        prepared = {
             'values': {'title': title, 'category': category, 'duty': duty,
                        'due_date': due_date},
             'new_duty': new_duty,
         }
+        if repeat is not None:
+            prepared['values'].update(repeat=repeat, interval=interval)
+        return prepared
 
     def save_task(self, draft):
         prepared = self.preview_task(draft)
@@ -216,6 +247,37 @@ class ArchiveService:
             if task is None or task['status'] != 'open':
                 raise ValueError("Choose an open task to complete")
             return dict(task)
+
+    def recurrence_details(self, task_id):
+        """Return the raw series snapshot for a task, if it belongs to one."""
+        with closing(db.connect(self.database)) as con:
+            con.execute('BEGIN')
+            task = reads.get_task(con, task_id)
+            if task is None or task['recurrence_id'] is None:
+                return None
+            series = reads.recurrence_details(con, task['recurrence_id'])
+            return None if series is None else dict(series)
+
+    def stop_repeating(self, expected_task, expected_series):
+        """Cancel an open occurrence and stop its series after snapshot checks."""
+        with closing(db.connect(self.database)) as con:
+            with con:
+                con.execute('BEGIN IMMEDIATE')
+                task = reads.get_task(con, expected_task['id'])
+                series = reads.recurrence_details(con, expected_series['id'])
+                if (task is None or dict(task) != expected_task or task['status'] != 'open'
+                        or series is None or dict(series) != expected_series
+                        or series['status'] != 'active'
+                        or task['recurrence_id'] != series['id']):
+                    raise ValueError("This recurring task changed. Select it again")
+                writes.cancel_task(con, task['id'])
+            export_error = None
+            if self.export_dir is not None:
+                try:
+                    export.write_all(con, self.export_dir)
+                except (export.ExportError, sqlite3.Error, OSError) as exc:
+                    export_error = str(exc)
+            return TaskSaveResult(expected_task['id'], export_error)
 
     def preview_due_date(self, expected_task, due_date):
         """Validate a new due date against a full, current open-task snapshot."""

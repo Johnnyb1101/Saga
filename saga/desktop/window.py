@@ -79,7 +79,7 @@ class TodaySection(QGroupBox):
             card = TaskCard() if clickable else QWidget()
             if clickable:
                 card.setCursor(Qt.CursorShape.PointingHandCursor)
-                card.setToolTip('Open task to mark it complete')
+                card.setToolTip('Open task details and actions')
                 card.clicked.connect(lambda checked=False, task_id=row['id']: self.taskActivated.emit(task_id))
             card.setObjectName('taskCard')
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
@@ -107,6 +107,8 @@ class TodaySection(QGroupBox):
                     details.append(f'{label} {value}')
                 else:
                     details.append(f'{label}: {value}')
+            if row.get('repeat_label'):
+                details.append(row['repeat_label'])
             card.details_label = _plain_label(' · '.join(details))
             card.details_label.setParent(card)
             card.details_label.setObjectName('cardDetails')
