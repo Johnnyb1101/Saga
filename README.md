@@ -968,6 +968,45 @@ your real archive, exports, desktop selection or scheduled tasks. You can choose
 the invented archive through **Settings → Advanced** to browse it manually;
 remember to select your real archive again afterward.
 
+### Readable report and agent evidence package
+
+Generate a self-contained HTML report for a chosen archive and inclusive date
+range, using a new output folder:
+
+```powershell
+.\.venv\Scripts\python.exe report_bundle.py --db data/stress-demo.db --out data/readable-report --since 2023-10-17 --until 2026-10-17
+```
+
+Open `data/readable-report/report.html` in a browser. The fixed report shows
+recorded measurements by category, role and month, with links back to the source
+accomplishments. Exact measurement names stay separate: `hours`, `hours spent`
+and `hours saved` are different measures. A generic `hours` entry does not prove
+how all working time was spent. Missing measurements are not treated as zero.
+Optional `--category` and `--role` filters apply to the same snapshot. Omit the
+date arguments for all recorded dates. No archive or app selection is changed.
+
+The same folder contains `evidence.json` (checked figures and source records),
+`agent-input.json` (compact facts for a writer), and `agent-guide.txt` (the draft
+format and instructions). An agent can produce a JSON narrative using those
+fact IDs. Include it in a new report folder with:
+
+```powershell
+.\.venv\Scripts\python.exe report_bundle.py --db data/stress-demo.db --out data/readable-report-with-draft --since 2023-10-17 --until 2026-10-17 --narrative data/narrative.json
+```
+
+Use the same date range and filters when including the draft. Drafts from a
+different or changed evidence snapshot are rejected. The renderer supplies
+numbers from verified facts; literal digits and unknown fact references in the
+draft are rejected. This validates fact references, not the meaning of prose,
+spelled-out numbers or claims of cause and effect. The narrative is therefore
+labeled **draft for review**, and the fixed report remains the numerical
+reference. These tools do not call an AI service or send records elsewhere.
+
+`manifest.json` is written last and records file hashes to detect missing or
+changed files. It is an integrity check, not a digital signature or proof of
+authenticity. Existing output folders are refused. A write failure may leave a
+partial new folder; it is not a complete package without a valid manifest.
+
 ## Morning brief and exports
 
 Export destination precedence is **explicit `export --out DIR`**, then
