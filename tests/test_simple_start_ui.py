@@ -146,7 +146,7 @@ class SimpleStartUiTests(unittest.TestCase):
     def test_failed_backup_write_rolls_back_toggle_and_preserves_drafts(self):
         self.window.get_started()
         self.window.entry.task.title.setText("Unsaved task")
-        self.window.entry.completed.outcome.setPlainText("Unsaved accomplishment")
+        self.window.entry.task.completion_details.outcome.setPlainText("Unsaved accomplishment")
         destination = self.root / "OneDrive" / "SagaBackups"
         destination.mkdir(parents=True)
         with patch("saga.desktop.backup_settings.detect_onedrive", return_value=destination.parent):
@@ -159,7 +159,7 @@ class SimpleStartUiTests(unittest.TestCase):
         self.assertFalse(self.store.backup_for(self.database)["enabled"])
         self.assertIn("settings unavailable", controls.status.text())
         self.assertEqual(self.window.entry.task.title.text(), "Unsaved task")
-        self.assertEqual(self.window.entry.completed.outcome.toPlainText(), "Unsaved accomplishment")
+        self.assertEqual(self.window.entry.task.completion_details.outcome.toPlainText(), "Unsaved accomplishment")
 
 
 if __name__ == "__main__":

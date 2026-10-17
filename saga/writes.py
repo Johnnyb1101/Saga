@@ -10,7 +10,7 @@ import datetime as dt
 import math
 import sqlite3
 
-from saga.recurrence import occurrence_date
+from saga.recurrence import RecurrenceDateOverflow, occurrence_date
 from saga.roles import name_key
 
 
@@ -101,12 +101,25 @@ def _insert_task(con, title, category, project_id, due_date, duty,
 
 
 def add_task(con, title, category, project_id=None, due_date=None, duty=None,
-             repeat=None, interval=1):
+             repeat=None, interval=1, month_day=None, second_month_day=None, end_date=None):
     """Insert a task, optionally with a schedule. Returns the first task id."""
     if repeat is None and interval != 1:
         raise ValueError("--interval requires --repeat")
+    if repeat is None and (month_day is not None or second_month_day is not None):
+        raise ValueError("monthly days require monthly recurrence")
     if repeat is not None:
-        due_date = occurrence_date(due_date, repeat, interval, 0)
+        due_date = occurrence_date(due_date, repeat, interval, 0, month_day, second_month_day)
+    if end_date is not None:
+        if repeat is None:
+            raise ValueError("end date requires recurrence")
+        try:
+            parsed_end = dt.date.fromisoformat(end_date)
+        except (TypeError, ValueError):
+            raise ValueError("End date must be a valid YYYY-MM-DD date") from None
+        if parsed_end.isoformat() != end_date:
+            raise ValueError("End date must be a valid YYYY-MM-DD date")
+        if end_date < due_date:
+            raise ValueError("End date must be on or after the first due date")
     with con:
         if not con.in_transaction:
             con.execute("BEGIN IMMEDIATE")
@@ -116,9 +129,11 @@ def add_task(con, title, category, project_id=None, due_date=None, duty=None,
             _require_project_accepts_tasks(con, project_id)
             recurrence_id = con.execute(
                 """INSERT INTO recurrences
-                   (title, category, project_id, duty, frequency, interval, anchor_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (title, category, project_id, duty, repeat, interval, due_date),
+                   (title, category, project_id, duty, frequency, interval, anchor_date,
+                    month_day, second_month_day, end_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (title, category, project_id, duty, repeat, interval, due_date,
+                 month_day, second_month_day, end_date),
             ).lastrowid
         return _insert_task(con, title, category, project_id, due_date, duty,
                             recurrence_id, 0 if recurrence_id is not None else None)
@@ -403,9 +418,19 @@ def complete_task(con, task_id, outcome=None, measure=None, quantity=None,
             series = con.execute("SELECT * FROM recurrences WHERE id=?", (task["recurrence_id"],)).fetchone()
             if series["status"] == "active":
                 next_index = task["occurrence_index"] + 1
-                due = occurrence_date(series["anchor_date"], series["frequency"], series["interval"], next_index)
-                _insert_task(con, series["title"], series["category"], series["project_id"], due,
-                             series["duty"], series["id"], next_index, allow_archived=True)
+                try:
+                    due = occurrence_date(series["anchor_date"], series["frequency"], series["interval"], next_index,
+                                          series["month_day"], series["second_month_day"])
+                except RecurrenceDateOverflow:
+                    if series["end_date"] is None:
+                        raise
+                    # Every valid end date precedes an unrepresentable future date.
+                    due = None
+                if series["end_date"] is not None and (due is None or due > series["end_date"]):
+                    con.execute("UPDATE recurrences SET status='stopped' WHERE id=?", (series["id"],))
+                else:
+                    _insert_task(con, series["title"], series["category"], series["project_id"], due,
+                                 series["duty"], series["id"], next_index, allow_archived=True)
     return cur.lastrowid
 
 

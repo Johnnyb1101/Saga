@@ -51,7 +51,7 @@ class TodayCompletionUiTests(unittest.TestCase):
                 writes.add_task(con, f'Invented {section}', 'work', due_date=due)
         self.window.refresh_today()
         self.window.entry.task.title.setText('Keep unsaved task')
-        self.window.entry.completed.outcome.setPlainText('Keep unsaved completed work')
+        self.window.entry.task.completion_details.outcome.setPlainText('Keep unsaved completed work')
 
         def complete(dialog):
             dialog.form.outcome.setPlainText('Finished this task')
@@ -75,7 +75,7 @@ class TodayCompletionUiTests(unittest.TestCase):
             self.assertEqual(con.execute('SELECT count(*) FROM completions').fetchone()[0], 5)
         self.assertEqual(self.window.tabs.count(), 2)
         self.assertEqual(self.window.entry.task.title.text(), 'Keep unsaved task')
-        self.assertEqual(self.window.entry.completed.outcome.toPlainText(), 'Keep unsaved completed work')
+        self.assertEqual(self.window.entry.task.completion_details.outcome.toPlainText(), 'Keep unsaved completed work')
 
     def test_task_card_keyboard_activation_and_stale_task_error(self):
         with closing(db.connect(self.database)) as con:

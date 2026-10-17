@@ -1,5 +1,6 @@
 """UI-independent desktop operations over Saga's existing database core."""
 
+import calendar
 import datetime as dt
 import sqlite3
 from contextlib import closing
@@ -90,17 +91,56 @@ def _completion_evidence(draft):
     }, new_measure
 
 
-def _repeat_label(series):
-    if series is None:
-        return None
-    frequency = series['frequency']
-    interval = series['interval']
-    if interval == 1:
+def _ordinal(day):
+    suffix = 'th' if 11 <= day % 100 <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+    return f'{day}{suffix}'
+
+
+def schedule_description(frequency, interval, anchor_date, month_day=None,
+                         second_month_day=None, end_date=None):
+    """Describe a persisted schedule or a normalized task preview."""
+    if frequency == 'monthly' and second_month_day is not None:
+        schedule = ('Twice a month' if interval == 1
+                    else f'Twice every {interval} months')
+    elif interval == 1:
         schedule = f'Repeats {frequency}'
     else:
         unit = {'daily': 'days', 'weekly': 'weeks', 'monthly': 'months'}[frequency]
         schedule = f'Every {interval} {unit}'
+    if frequency == 'weekly' and anchor_date is not None:
+        schedule += f' on {dt.date.fromisoformat(anchor_date):%A}'
+    elif frequency == 'monthly' and month_day is not None:
+        days = f'the {_ordinal(month_day)}'
+        if second_month_day is not None:
+            days += f' and {_ordinal(second_month_day)}'
+        schedule += f' on {days}'
+    if end_date is not None:
+        schedule += f', ends {end_date}'
+    return schedule
+
+
+def _repeat_label(series):
+    if series is None:
+        return None
+    schedule = schedule_description(series['frequency'], series['interval'],
+                                    series['anchor_date'], series['month_day'],
+                                    series['second_month_day'], series['end_date'])
     return schedule if series['status'] == 'active' else f'Stopped: {schedule}'
+
+
+def _monthly_start(start, *days):
+    """Find the first selected calendar day on or after start."""
+    month_index = (start.year - 1) * 12 + start.month - 1
+    while month_index < 120000:
+        year, month = divmod(month_index, 12)
+        year, month = year + 1, month + 1
+        last_day = calendar.monthrange(year, month)[1]
+        candidates = sorted({dt.date(year, month, min(day, last_day)) for day in days})
+        for candidate in candidates:
+            if candidate >= start:
+                return candidate.isoformat()
+        month_index += 1
+    raise ValueError('No selected due date fits in the supported date range')
 
 
 class ArchiveService:
@@ -126,7 +166,8 @@ class ArchiveService:
             con.execute('BEGIN')
             open_tasks = [dict(row) for row in reads.open_tasks(con)]
             series = {row['id']: row for row in con.execute(
-                'SELECT id, frequency, interval, status FROM recurrences')}
+                'SELECT id, frequency, interval, anchor_date, month_day, '
+                'second_month_day, end_date, status FROM recurrences')}
 
             def labeled(rows):
                 return [{**dict(row), 'repeat_label': _repeat_label(
@@ -208,12 +249,63 @@ class ArchiveService:
             if parsed.isoformat() != due_date:
                 raise ValueError("Due date must use YYYY-MM-DD")
         repeat = draft.get('repeat')
+        end_date = draft.get('end_date')
+        if end_date is not None:
+            if not isinstance(end_date, str):
+                raise ValueError('End date must use YYYY-MM-DD')
+            try:
+                parsed_end = dt.date.fromisoformat(end_date)
+            except ValueError:
+                raise ValueError('End date must use YYYY-MM-DD') from None
+            if parsed_end.isoformat() != end_date:
+                raise ValueError('End date must use YYYY-MM-DD')
         interval = draft.get('interval', 1)
+        weekday = draft.get('weekday')
+        month_day = draft.get('month_day')
+        second_month_day = draft.get('second_month_day')
+        if weekday is not None and (type(weekday) is not int or not 0 <= weekday <= 6):
+            raise ValueError('Weekday must be a number from 0 (Monday) to 6 (Sunday)')
+        for name, value in (('Month day', month_day), ('Second month day', second_month_day)):
+            if value is not None and (type(value) is not int or not 1 <= value <= 31):
+                raise ValueError(f'{name} must be a number from 1 to 31')
         if repeat is None:
+            if end_date is not None:
+                raise ValueError('End date requires a repeat schedule')
             if interval != 1 or type(interval) is not int:
                 raise ValueError("Interval requires a repeat schedule")
+            if any(value is not None for value in (weekday, month_day, second_month_day)):
+                raise ValueError('Schedule selectors require a repeat schedule')
         else:
-            occurrence_date(due_date, repeat, interval, 0)
+            if repeat == 'weekly':
+                if month_day is not None or second_month_day is not None:
+                    raise ValueError('Month days require a monthly repeat schedule')
+                if weekday is not None and due_date is not None:
+                    start = dt.date.fromisoformat(due_date)
+                    try:
+                        due_date = (start + dt.timedelta(
+                            days=(weekday - start.weekday()) % 7)).isoformat()
+                    except OverflowError:
+                        raise ValueError('No selected due date fits in the supported date range') from None
+            elif repeat == 'monthly':
+                if weekday is not None:
+                    raise ValueError('Weekday requires a weekly repeat schedule')
+                if second_month_day is not None and month_day is None:
+                    raise ValueError('Second month day requires a first month day')
+                if second_month_day is not None:
+                    if second_month_day == month_day:
+                        raise ValueError('Choose two different month days')
+                    if interval != 1:
+                        raise ValueError('Two month days require a monthly interval of 1')
+                    month_day, second_month_day = sorted((month_day, second_month_day))
+                if month_day is not None and due_date is not None:
+                    due_date = _monthly_start(dt.date.fromisoformat(due_date),
+                                              *((month_day, second_month_day)
+                                                if second_month_day is not None else (month_day,)))
+            elif any(value is not None for value in (weekday, month_day, second_month_day)):
+                raise ValueError('Schedule selectors require weekly or monthly repeat')
+            occurrence_date(due_date, repeat, interval, 0, month_day, second_month_day)
+            if end_date is not None and end_date < due_date:
+                raise ValueError('End date must be on or after the first due date')
         with closing(db.connect(self.database)) as con:
             if category not in [row['name'] for row in reads.categories(con, active_only=True)]:
                 raise ValueError(f"Unknown category: {category}")
@@ -225,6 +317,11 @@ class ArchiveService:
         }
         if repeat is not None:
             prepared['values'].update(repeat=repeat, interval=interval)
+            if end_date is not None:
+                prepared['values']['end_date'] = end_date
+            if month_day is not None:
+                prepared['values'].update(month_day=month_day,
+                                          second_month_day=second_month_day)
         return prepared
 
     def save_task(self, draft):

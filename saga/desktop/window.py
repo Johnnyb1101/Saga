@@ -309,15 +309,13 @@ class MainWindow(QMainWindow):
             self.tabs.removeTab(index)
             self.entry.deleteLater()
         self.entry = AddTaskWidget(service)
-        self.capture = self.entry.completed
+        self.capture = self.entry.task
         # Reference lookup above exposes startup errors before changing the page.
         if not references["categories"]:
-            for form in (self.entry.task, self.entry.completed):
-                form.status.setText("This archive has no categories available for new entries.")
+            self.entry.task.status.setText("This archive has no categories available for new entries.")
         self.entry.saved.connect(self.refresh_today)
         self.entry.saved.connect(self.backup_controller.request_backup)
         self.entry.task.category.categoriesChanged.connect(self.backup_controller.request_backup)
-        self.entry.completed.category.categoriesChanged.connect(self.backup_controller.request_backup)
         self.tabs.addTab(self.entry, "Add Task")
         self.tabs.setCurrentWidget(self.today_page)
         self.archive_label.setText("Your Saga")
@@ -342,7 +340,6 @@ class MainWindow(QMainWindow):
         self.refresh_today()
         if self.entry is not None:
             self.entry.task.refresh_categories()
-            self.entry.completed.refresh_categories()
         self.backup_controller.request_backup()
 
     def refresh_today(self):

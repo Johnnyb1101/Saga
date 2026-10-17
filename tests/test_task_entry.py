@@ -116,9 +116,9 @@ class TaskEntryTests(unittest.TestCase):
             save.assert_called_once()
         self.assertEqual(len(self.service.saved_tasks), 1)
 
-    def test_modes_preserve_both_drafts_and_discard_is_all_or_nothing(self):
+    def test_checkbox_preserves_shared_and_completion_values_on_discard_cancel(self):
         task = self.widget.task
-        completed = self.widget.completed
+        completed = task.completion_details
         self.assertFalse(self.widget.already_finished.isChecked())
         task.title.setText("Invented future work")
         self.widget.already_finished.setChecked(True)
@@ -129,7 +129,7 @@ class TaskEntryTests(unittest.TestCase):
         self.assertEqual(task.title.text(), "Invented future work")
         self.widget.already_finished.setChecked(True)
         self.assertEqual(completed.outcome.toPlainText(), "Invented completed work")
-        self.assertEqual(completed.draft()["completed_date"], "2026-09-01")
+        self.assertEqual(completed.completed_date.date().toString('yyyy-MM-dd'), "2026-09-01")
         self.assertTrue(self.widget.has_unsaved_draft)
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel) as question:
             self.assertFalse(self.widget.confirm_discard())
@@ -137,11 +137,11 @@ class TaskEntryTests(unittest.TestCase):
         self.assertEqual(task.title.text(), "Invented future work")
         self.assertEqual(completed.outcome.toPlainText(), "Invented completed work")
 
-    def test_service_setter_updates_both_forms(self):
+    def test_service_setter_updates_form_and_shared_category(self):
         replacement = FakeService()
         self.widget.service = replacement
         self.assertIs(self.widget.task.service, replacement)
-        self.assertIs(self.widget.completed.service, replacement)
+        self.assertIs(self.widget.task.category.service, replacement)
 
     def test_real_service_saves_open_task_and_new_role(self):
         with tempfile.TemporaryDirectory() as root:
@@ -158,8 +158,9 @@ class TaskEntryTests(unittest.TestCase):
                 self.assertTrue(task._preview_draft)
                 task.save()
                 self.assertIn("Saved task #", task.status.text())
-                widget.completed.category.setCurrentIndex(widget.completed.category.findData("work"))
-                self.assertGreaterEqual(widget.completed.role.findData("Invented role"), 0)
+                task.reset_form()
+                task.category.setCurrentIndex(task.category.findData("work"))
+                self.assertGreaterEqual(task.role.findData("Invented role"), 0)
                 with closing(db.connect(database)) as con:
                     row = con.execute("SELECT title, status, duty FROM tasks").fetchone()
                     self.assertEqual(tuple(row), ("Invented open task", "open", "Invented role"))

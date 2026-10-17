@@ -17,13 +17,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from saga.desktop.capture import CaptureWidget
+from saga.application import schedule_description
 from saga.desktop.categories import CategoryPicker
+from saga.desktop.completion_details import CompletionDetails
 
 
 class TaskWidget(QWidget):
@@ -63,26 +63,68 @@ class TaskWidget(QWidget):
         self.due_date.setEnabled(False)
         self.repeat_task = QCheckBox('Repeat this task')
         self.repeat_frequency = QComboBox()
-        for label, value in (('Daily', 'daily'), ('Weekly', 'weekly'), ('Monthly', 'monthly')):
+        for label, value in (('Daily', 'daily'), ('Weekly', 'weekly'),
+                             ('Every two weeks', 'biweekly'), ('Monthly', 'monthly'),
+                             ('Twice a month', 'twice_monthly')):
             self.repeat_frequency.addItem(label, value)
         self.repeat_frequency.setAccessibleName('Repeat schedule')
         self.repeat_interval = QSpinBox()
         self.repeat_interval.setRange(1, 999)
         self.repeat_interval.setAccessibleName('Repeat every how many days, weeks, or months')
+        self.repeat_weekday = QComboBox()
+        self.repeat_weekday.addItems(['Monday', 'Tuesday', 'Wednesday', 'Thursday',
+                                     'Friday', 'Saturday', 'Sunday'])
+        self.repeat_weekday.setCurrentIndex(QDate.currentDate().dayOfWeek() - 1)
+        self.repeat_weekday.setAccessibleName('Day of the week')
+        self.repeat_month_day = QSpinBox()
+        self.repeat_month_day.setRange(1, 31)
+        self.repeat_month_day.setValue(QDate.currentDate().day())
+        self.repeat_month_day.setAccessibleName('Day of the month')
+        self.repeat_second_day = QSpinBox()
+        self.repeat_second_day.setRange(1, 31)
+        self.repeat_second_day.setValue(15)
+        self.repeat_second_day.setAccessibleName('Second day of the month')
+        self.schedule_help = QLabel()
+        self.schedule_help.setWordWrap(True)
+        self.has_end_date = QCheckBox('End on')
+        self.end_date = QDateEdit(QDate.currentDate())
+        self.end_date.setCalendarPopup(True)
+        self.end_date.setDisplayFormat('yyyy-MM-dd')
+        self.end_date.setAccessibleName('Recurring schedule end date (inclusive)')
+        self.end_date.setEnabled(False)
 
         form = QFormLayout()
         form.addRow("Task", self.title)
         form.addRow("Category", self.category)
+        role_label = QLabel("Role (optional)")
+        role_label.setBuddy(self.role)
+        form.addRow(role_label)
         form.addRow(self.role_help)
-        form.addRow("Role (optional)", self.role)
+        form.addRow(self.role)
         form.addRow("Role name", self.new_role)
         form.addRow("Due date", self.has_due_date)
         form.addRow("Choose date", self.due_date)
         form.addRow(self.repeat_task)
         form.addRow('Repeat', self.repeat_frequency)
         form.addRow('Every (days, weeks, or months)', self.repeat_interval)
+        form.addRow('Day of the week', self.repeat_weekday)
+        form.addRow('Day of the month', self.repeat_month_day)
+        form.addRow('Second day of the month', self.repeat_second_day)
+        form.addRow(self.schedule_help)
+        form.addRow(self.has_end_date)
+        form.addRow('Last allowed due date', self.end_date)
+        self.already_finished = QCheckBox("I’ve already finished this")
+        self.already_finished.setAccessibleName("I’ve already finished this")
+        form.addRow(self.already_finished)
+        self.completion_details = CompletionDetails(service)
+        form.addRow(self.completion_details)
+        form.setRowVisible(self.completion_details, False)
         form.setRowVisible(self.repeat_frequency, False)
         form.setRowVisible(self.repeat_interval, False)
+        for field in (self.repeat_weekday, self.repeat_month_day, self.repeat_second_day, self.schedule_help):
+            form.setRowVisible(field, False)
+        form.setRowVisible(self.has_end_date, False)
+        form.setRowVisible(self.end_date, False)
         self.form_layout = form
         self.form_group = QGroupBox("Something to do")
         self.form_group.setLayout(form)
@@ -138,8 +180,15 @@ class TaskWidget(QWidget):
         self.has_due_date.toggled.connect(self._due_date_changed)
         self.due_date.dateChanged.connect(self._mark_dirty)
         self.repeat_task.toggled.connect(self._repeat_changed)
-        self.repeat_frequency.currentIndexChanged.connect(self._mark_dirty)
+        self.repeat_frequency.currentIndexChanged.connect(self._schedule_changed)
         self.repeat_interval.valueChanged.connect(self._mark_dirty)
+        self.repeat_weekday.currentIndexChanged.connect(self._mark_dirty)
+        self.repeat_month_day.valueChanged.connect(self._mark_dirty)
+        self.repeat_second_day.valueChanged.connect(self._mark_dirty)
+        self.has_end_date.toggled.connect(self._end_date_changed)
+        self.end_date.dateChanged.connect(self._mark_dirty)
+        self.already_finished.toggled.connect(self._finished_changed)
+        self.completion_details.changed.connect(self._mark_dirty)
         self.reload_references()
         self._dirty = False
 
@@ -150,21 +199,53 @@ class TaskWidget(QWidget):
     def _mark_dirty(self, *_):
         self._dirty = True
 
+    def _finished_changed(self, finished):
+        self.form_layout.setRowVisible(self.completion_details, finished)
+        self.form_layout.labelForField(self.title).setText("What did you finish?" if finished else "Task")
+        self.title.setPlaceholderText("What did you finish?" if finished else "What needs to be done?")
+        self.title.setAccessibleName("What did you finish?" if finished else "Task title")
+        for field in (self.has_due_date, self.due_date, self.repeat_task, self.repeat_frequency,
+                      self.repeat_interval, self.repeat_weekday, self.repeat_month_day,
+                      self.repeat_second_day, self.has_end_date, self.end_date):
+            field.setEnabled(False if finished else self._schedule_field_enabled(field))
+        self.form_group.setTitle("Something finished" if finished else "Something to do")
+        self.save_button.setText("Save accomplishment" if finished else "Save task")
+        self._mark_dirty()
+
+    def _schedule_field_enabled(self, field):
+        if field is self.end_date:
+            return self.has_end_date.isChecked()
+        if field is self.has_due_date:
+            return not self.repeat_task.isChecked()
+        if field is self.due_date:
+            return self.has_due_date.isChecked()
+        return True
+
+    def _end_date_changed(self, checked):
+        self.end_date.setEnabled(checked and not self.already_finished.isChecked())
+        self.form_layout.setRowVisible(self.end_date, checked and self.repeat_task.isChecked())
+        self._mark_dirty()
+
     def reload_references(self):
         refs = self.service.references()
         was_dirty = self._dirty
         selected_category = self.category.currentData()
+        selected_role = self.role.currentData()
         self._roles_by_category = refs["roles"]
         self.category.blockSignals(True)
         self.category.set_categories(refs["categories"])
         self.category.blockSignals(False)
         self._category_changed()
-        self._dirty = was_dirty or (selected_category is not None and self.category.currentData() is None)
-        if selected_category is not None and self.category.currentData() is None:
+        missing_measure = self.completion_details.reload_references(refs["measures"])
+        missing_category = selected_category is not None and self.category.currentData() is None
+        missing_role = selected_role is not None and selected_role is not self.NEW and self.role.currentData() is None
+        self._dirty = was_dirty or missing_category or missing_role or missing_measure
+        if missing_category or missing_role or missing_measure:
             self._preview_draft = None
             if not self.preview_group.isHidden():
                 self.edit_draft()
-            self.status.setText("The selected category is no longer available. Choose another category to save this draft.")
+            missing = "category" if missing_category else "role" if missing_role else "measurement unit"
+            self.status.setText(f"The selected {missing} is no longer available. Choose another to save this draft.")
 
     def refresh_categories(self):
         try:
@@ -181,7 +262,7 @@ class TaskWidget(QWidget):
             self.role.addItem(name, name)
         self.role.addItem("Create a role…", self.NEW)
         role_index = self.role.findData(selected_role)
-        self.role.setCurrentIndex(max(role_index, 0))
+        self.role.setCurrentIndex(role_index if role_index >= 0 else -1 if selected_role is not None else 0)
         self.role.blockSignals(False)
         self._role_changed()
         self._mark_dirty()
@@ -194,19 +275,48 @@ class TaskWidget(QWidget):
         if self.repeat_task.isChecked() and not checked:
             self.has_due_date.setChecked(True)
             return
-        self.due_date.setEnabled(checked)
+        self.due_date.setEnabled(checked and not self.already_finished.isChecked())
         self._mark_dirty()
 
     def _repeat_changed(self, checked):
         self.form_layout.setRowVisible(self.repeat_frequency, checked)
-        self.form_layout.setRowVisible(self.repeat_interval, checked)
         if checked:
             self.has_due_date.setChecked(True)
-        self.has_due_date.setEnabled(not checked)
+        self.has_due_date.setEnabled(not checked and not self.already_finished.isChecked())
+        self._schedule_changed()
+
+    def _schedule_changed(self, *_):
+        checked = self.repeat_task.isChecked()
+        frequency = self.repeat_frequency.currentData()
+        weekly = frequency in ('weekly', 'biweekly')
+        monthly = frequency in ('monthly', 'twice_monthly')
+        self.form_layout.setRowVisible(self.repeat_interval, checked and frequency in ('daily', 'weekly', 'monthly'))
+        self.form_layout.setRowVisible(self.repeat_weekday, checked and weekly)
+        self.form_layout.setRowVisible(self.repeat_month_day, checked and monthly)
+        self.form_layout.setRowVisible(self.repeat_second_day, checked and frequency == 'twice_monthly')
+        self.form_layout.setRowVisible(self.schedule_help, checked)
+        self.form_layout.setRowVisible(self.has_end_date, checked)
+        self.form_layout.setRowVisible(self.end_date, checked and self.has_end_date.isChecked())
+        self.form_layout.labelForField(self.due_date).setText('Start on or after' if checked else 'Choose date')
+        self.schedule_help.setText(
+            'The first due date will be the first selected day on or after your start date.'
+            + (' Short months use the last day. If both dates land on that day, only one task is created.'
+               if frequency == 'twice_monthly' else
+               ' Short months use the last day, then return to your chosen date.' if monthly else ''))
         self._mark_dirty()
 
     def draft(self):
         role = self.role.currentData()
+        if self.already_finished.isChecked():
+            title = self.title.text().strip()
+            result = self.completion_details.result_details.toPlainText().strip()
+            return {
+                "category": self.category.currentData(),
+                "outcome": title + ("\n\n" + result if result else ""),
+                "duty": None if role is self.NEW else role,
+                "new_duty": self.new_role.text().strip() if role is self.NEW else None,
+                **self.completion_details.draft(),
+            }
         draft = {
             "title": self.title.text(),
             "category": self.category.currentData(),
@@ -215,29 +325,70 @@ class TaskWidget(QWidget):
             "due_date": self.due_date.date().toString("yyyy-MM-dd") if self.has_due_date.isChecked() else None,
         }
         if self.repeat_task.isChecked():
-            draft.update(repeat=self.repeat_frequency.currentData(), interval=self.repeat_interval.value())
+            frequency = self.repeat_frequency.currentData()
+            draft.update(repeat={'biweekly': 'weekly', 'twice_monthly': 'monthly'}.get(frequency, frequency),
+                         interval=2 if frequency == 'biweekly' else 1 if frequency == 'twice_monthly'
+                         else self.repeat_interval.value())
+            if frequency in ('weekly', 'biweekly'):
+                draft['weekday'] = self.repeat_weekday.currentIndex()
+            elif frequency in ('monthly', 'twice_monthly'):
+                draft['month_day'] = self.repeat_month_day.value()
+                if frequency == 'twice_monthly':
+                    draft['second_month_day'] = self.repeat_second_day.value()
+            if self.has_end_date.isChecked():
+                draft['end_date'] = self.end_date.date().toString('yyyy-MM-dd')
         return draft
 
     def show_preview(self):
+        if self._committed or self._saving:
+            return
         draft = self.draft()
+        finished = self.already_finished.isChecked()
+        if finished and not self.title.text().strip():
+            self.status.setText("Check the draft: What did you finish? must not be blank")
+            return
         try:
-            self.service.preview_task(draft)
+            prepared = (self.service.preview_capture(draft) if finished else
+                        self.service.preview_task(draft))
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status.setText(f"Check the draft: {exc}")
             return
         self._preview_draft = draft
-        details = (
-            ("Task", draft["title"].strip()),
-            ("Category", draft["category"]),
-            ("Role", draft["new_duty"] or draft["duty"] or "None"),
-            ("Due", draft["due_date"] or "No due date"),
-        )
+        self._preview_finished = finished
+        values = prepared.get('values', draft)
+        if finished:
+            details = [
+                ("Outcome", draft["outcome"]),
+                ("Category", draft["category"]),
+                ("Role", draft["new_duty"] or draft["duty"] or "None"),
+                ("Completed", draft["completed_date"] or "Today, at time of save"),
+                ("Can you put a number to this?", {
+                    "measured": "Yes", "not_applicable": "No number needed",
+                    "unknown": "I’ll add a number later",
+                }[draft["measurement_status"]]),
+            ]
+            if draft["measurement_status"] == "measured":
+                details.extend((("What are you counting?", draft["new_measure"] or draft["measure"]),
+                                ("Amount", draft["quantity"])))
+            if draft["remind_on"]:
+                details.append(("When should Saga remind you?", draft["remind_on"]))
+            details.append(("Flagged for review", "Yes" if draft["flagged"] else "No"))
+        else:
+            details = (
+                ("Task", draft["title"].strip()),
+                ("Category", draft["category"]),
+                ("Role", draft["new_duty"] or draft["duty"] or "None"),
+                ("First due" if draft.get('repeat') else "Due", values["due_date"] or "No due date"),
+            )
         self.preview_text.setPlainText("\n".join(f"{label}: {value}" for label, value in details))
-        if draft.get('repeat'):
-            unit = {'daily': 'day', 'weekly': 'week', 'monthly': 'month'}[draft['repeat']]
-            number = draft['interval']
-            self.preview_text.appendPlainText(f"Repeat: Every {number} {unit}{'s' if number != 1 else ''}")
-            self.preview_text.appendPlainText('Completing this task creates the next occurrence.')
+        if not finished and draft.get('repeat'):
+            description = schedule_description(draft['repeat'], draft['interval'], values['due_date'],
+                                               values.get('month_day'), values.get('second_month_day'),
+                                               values.get('end_date'))
+            self.preview_text.appendPlainText(f'Repeat: {description}')
+            self.preview_text.appendPlainText(
+                'Occurrences due on the end date are included; no later occurrences will be created.'
+                if values.get('end_date') else 'Completing this task creates the next occurrence.')
         self.form_group.setEnabled(False)
         self.form_group.hide()
         self.preview_button.hide()
@@ -262,7 +413,8 @@ class TaskWidget(QWidget):
         self._saving = True
         self.save_button.setEnabled(False)
         try:
-            result = self.service.save_task(self._preview_draft)
+            result = (self.service.save_capture(self._preview_draft) if self._preview_finished else
+                      self.service.save_task(self._preview_draft))
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status.setText(f"Could not save: {exc}. Your draft is still here.")
             self.save_button.setEnabled(True)
@@ -275,10 +427,13 @@ class TaskWidget(QWidget):
         self.cancel_button.setEnabled(False)
         self.new_button.show()
         if result.export_error:
-            self.status.setText(f"Saved task #{result.task_id}. Export failed: {result.export_error}. Retry export only.")
+            saved = (f"Saved accomplishment #{result.completion_id}" if self._preview_finished else
+                     f"Saved task #{result.task_id}")
+            self.status.setText(f"{saved}. Export failed: {result.export_error}. Retry export only.")
             self.retry_button.show()
         else:
-            self.status.setText(f"Saved task #{result.task_id}.")
+            self.status.setText(f"Saved accomplishment #{result.completion_id}." if self._preview_finished else
+                                f"Saved task #{result.task_id}.")
         self.saved.emit()
 
     def retry_export(self):
@@ -287,16 +442,16 @@ class TaskWidget(QWidget):
         try:
             self.service.retry_export()
         except (ValueError, OSError, sqlite3.Error) as exc:
-            self.status.setText(f"Task is saved. Export retry failed: {exc}")
+            self.status.setText(f"{'Accomplishment' if self._preview_finished else 'Task'} is saved. Export retry failed: {exc}")
             return
         self.retry_button.hide()
-        self.status.setText("Task is saved. Export completed.")
+        self.status.setText(f"{'Accomplishment' if self._preview_finished else 'Task'} is saved. Export completed.")
 
     def confirm_discard(self):
         if not self.has_unsaved_draft:
             return True
         answer = QMessageBox.question(
-            self, "Discard draft?", "Discard this unsaved task draft?",
+            self, "Discard draft?", "Discard this unsaved entry draft?",
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -324,21 +479,29 @@ class TaskWidget(QWidget):
         self.retry_button.hide()
         self.new_button.hide()
         self.title.clear()
+        self.already_finished.setChecked(False)
+        self.completion_details.reset()
         self.category.setCurrentIndex(0)
         self.role.setCurrentIndex(0)
         self.new_role.clear()
         self.repeat_task.setChecked(False)
         self.repeat_frequency.setCurrentIndex(0)
         self.repeat_interval.setValue(1)
+        self.repeat_weekday.setCurrentIndex(QDate.currentDate().dayOfWeek() - 1)
+        self.repeat_month_day.setValue(QDate.currentDate().day())
+        self.repeat_second_day.setValue(15)
+        self.has_end_date.setChecked(False)
+        self.end_date.setDate(QDate.currentDate())
         self.has_due_date.setChecked(False)
         self.due_date.setDate(QDate.currentDate())
+        self._finished_changed(False)
         self.status.clear()
         self._dirty = False
         self.title.setFocus()
 
 
 class AddTaskWidget(QWidget):
-    """Choose future work or a completed accomplishment without losing either draft."""
+    """Add future work or a finished accomplishment in one shared form."""
 
     saved = Signal()
 
@@ -346,58 +509,19 @@ class AddTaskWidget(QWidget):
         super().__init__(parent)
         self._service = service
         self.task = TaskWidget(service)
-        self.completed = CaptureWidget(service)
-        self.task.category.categoriesChanged.connect(self.completed.refresh_categories)
-        self.completed.category.categoriesChanged.connect(self.task.refresh_categories)
+        self.already_finished = self.task.already_finished
+        self.task.saved.connect(self.saved)
 
-        self.already_finished = QCheckBox("I’ve already finished this")
-        self.already_finished.setAccessibleName("I’ve already finished this")
-
-        self.stack = QStackedWidget()
-        for child in (self.task, self.completed):
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-            scroll.setWidget(child)
-            self.stack.addWidget(scroll)
-        self.already_finished.toggled.connect(self._switch_form)
-        self.task.saved.connect(lambda: self._entry_saved(self.completed))
-        self.completed.saved.connect(lambda: self._entry_saved(self.task))
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(self.task)
 
         layout = QVBoxLayout(self)
         heading = QLabel("Add task")
         heading.setObjectName("addTaskTitle")
         layout.addWidget(heading)
-        layout.addWidget(self.already_finished)
-        layout.addWidget(self.stack, 1)
-
-    def _switch_form(self, finished):
-        source, target = (self.task, self.completed) if finished else (self.completed, self.task)
-        if not target.has_unsaved_draft and not target._committed:
-            if finished and not target.outcome.toPlainText().strip() and source.title.text().strip():
-                target.outcome.setPlainText(source.title.text())
-            elif not finished and not target.title.text().strip() and source.outcome.toPlainText().strip():
-                target.title.setText(source.outcome.toPlainText().strip())
-            if source.category.currentData() is not None:
-                category_index = target.category.findData(source.category.currentData())
-                if category_index >= 0:
-                    target.category.setCurrentIndex(category_index)
-            role = source.new_role.text().strip() if source.role.currentData() is source.NEW else source.role.currentData()
-            if role and target.role.currentData() is None:
-                role_index = target.role.findData(role)
-                if role_index >= 0:
-                    target.role.setCurrentIndex(role_index)
-                else:
-                    target.role.setCurrentIndex(target.role.count() - 1)
-                    target.new_role.setText(role)
-        self.stack.setCurrentIndex(1 if finished else 0)
-
-    def _entry_saved(self, other):
-        # Share newly registered roles with an untouched form. Never replace a
-        # draft or a saved result that may still need its export retried.
-        if not other.has_unsaved_draft and not other._committed:
-            other.reset_form()
-        self.saved.emit()
+        layout.addWidget(scroll, 1)
 
     @property
     def service(self):
@@ -407,19 +531,18 @@ class AddTaskWidget(QWidget):
     def service(self, value):
         self._service = value
         self.task.service = value
-        self.completed.service = value
         self.task.category.service = value
-        self.completed.category.service = value
+        self.task.completion_details.service = value
 
     @property
     def has_unsaved_draft(self):
-        return self.task.has_unsaved_draft or self.completed.has_unsaved_draft
+        return self.task.has_unsaved_draft
 
     def confirm_discard(self):
         if not self.has_unsaved_draft:
             return True
         answer = QMessageBox.question(
-            self, "Discard drafts?", "Discard all unsaved task and accomplishment drafts?",
+            self, "Discard draft?", "Discard this unsaved entry draft?",
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )

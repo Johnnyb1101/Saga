@@ -74,15 +74,19 @@ class CategoryUiTests(unittest.TestCase):
         self.widget = AddTaskWidget(self.service)
         self.addCleanup(self.widget.close)
 
-    def test_create_selects_category_and_preserves_both_drafts(self):
+    def test_create_selects_category_and_preserves_inline_draft(self):
         task = self.widget.task
-        completed = self.widget.completed
+        details = task.completion_details
         self.assertIsInstance(task.category.button, QPushButton)
         task.title.setText("Draft task")
         task.role.setCurrentIndex(task.role.findData("Planning"))
-        completed.outcome.setPlainText("Draft accomplishment")
-        completed.measurement_status.setCurrentIndex(completed.measurement_status.findData("measured"))
-        completed.quantity.setText("7")
+        self.widget.already_finished.setChecked(True)
+        details.outcome.setPlainText("Draft accomplishment")
+        details.measurement_status.setCurrentIndex(details.measurement_status.findData("measured"))
+        details.quantity.setText("7")
+        self.widget.already_finished.setChecked(False)
+        self.widget.already_finished.setChecked(True)
+        self.assertEqual(task.role.currentData(), "Planning")
         dialog = CreateCategoryDialog(self.service)
         dialog.name.setText("learning")
         dialog.reviews.setChecked(False)
@@ -94,9 +98,10 @@ class CategoryUiTests(unittest.TestCase):
         task.category.setCurrentIndex(task.category.findData("learning"))
         self.assertEqual(task.draft()["category"], "learning")
         self.assertEqual(task.title.text(), "Draft task")
-        self.assertEqual(completed.outcome.toPlainText(), "Draft accomplishment")
-        self.assertEqual(completed.quantity.text(), "7")
-        self.assertEqual(completed.measurement_status.currentData(), "measured")
+        self.assertTrue(self.widget.already_finished.isChecked())
+        self.assertEqual(details.outcome.toPlainText(), "Draft accomplishment")
+        self.assertEqual(details.quantity.text(), "7")
+        self.assertEqual(details.measurement_status.currentData(), "measured")
         self.assertTrue(task.has_unsaved_draft)
         dialog.close()
 
@@ -114,7 +119,7 @@ class CategoryUiTests(unittest.TestCase):
         with patch.object(ManageCategoriesDialog, "exec", dismiss_after_delete):
             picker._manage_from_chooser(chooser, choices)
         self.assertEqual(picker.findData("personal"), -1)
-        self.assertEqual(self.widget.completed.category.findData("personal"), -1)
+        self.assertFalse(hasattr(self.widget, "completed"))
         chooser.close()
 
     def test_hidden_preview_returns_to_edit_when_category_disappears(self):
@@ -143,10 +148,10 @@ class CategoryUiTests(unittest.TestCase):
 
     def test_delete_unused_and_archive_used_clear_disappeared_selection(self):
         task = self.widget.task
-        completed = self.widget.completed
         task.category.setCurrentIndex(task.category.findData("personal"))
         task.title.setText("Keep title")
-        completed.outcome.setPlainText("Keep outcome")
+        self.widget.already_finished.setChecked(True)
+        task.completion_details.outcome.setPlainText("Keep result")
         dialog = ManageCategoriesDialog(self.service)
         dialog.list.setCurrentRow(1)
         self.assertEqual(dialog.action.text(), "Delete category")
@@ -162,12 +167,12 @@ class CategoryUiTests(unittest.TestCase):
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             dialog._act()
         task.category.categoriesChanged.emit()
-        self.assertIsNone(completed.category.currentData())
-        self.assertEqual(completed.outcome.toPlainText(), "Keep outcome")
+        self.assertIsNone(task.category.currentData())
+        self.assertEqual(task.completion_details.outcome.toPlainText(), "Keep result")
         self.assertTrue(self.service._option("work")["archived"])
         dialog._act()  # Restore does not require a destructive-action confirmation.
         task.category.categoriesChanged.emit()
-        self.assertIn("work", completed.category._names)
+        self.assertIn("work", task.category._names)
         dialog.close()
 
     def test_create_error_and_export_error_are_distinct(self):
@@ -207,12 +212,12 @@ class CategoryUiTests(unittest.TestCase):
             with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes):
                 manage._act()
             widget.task.category.categoriesChanged.emit()
-            self.assertEqual(widget.completed.category.findData('My category'), -1)
+            self.assertEqual(widget.task.category.findData('My category'), -1)
             self.assertEqual(service.today()['undated'][0]['category'], 'My category')
             self.assertEqual(manage.action.text(), 'Restore category')
             manage._act()
             widget.task.category.categoriesChanged.emit()
-            self.assertGreaterEqual(widget.completed.category.findData('My category'), 0)
+            self.assertGreaterEqual(widget.task.category.findData('My category'), 0)
             manage.close()
             create.close()
             widget.close()

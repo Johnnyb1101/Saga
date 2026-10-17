@@ -130,7 +130,7 @@ class CategoryTests(unittest.TestCase):
         self.assertTrue(any('backed up to' in item for item in applied))
         self.assertTrue(any('006_categories.sql' in item for item in applied))
         with contextlib.closing(db.connect(old)) as con:
-            self.assertEqual(db.schema_version(con), 6)
+            self.assertEqual(db.schema_version(con), 8)
             self.assertEqual(con.execute("SELECT name_key,status FROM categories WHERE name='work'").fetchone()[:],
                              ('work', 'active'))
             with contextlib.closing(db.connect(self.database)) as fresh:

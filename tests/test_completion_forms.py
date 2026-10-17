@@ -64,27 +64,29 @@ class CompletionFormTests(unittest.TestCase):
     def setUp(self):
         self.service = FakeService()
 
-    def test_checkbox_preserves_drafts_and_copies_blank_context(self):
+    def test_checkbox_expands_details_and_preserves_shared_context(self):
         widget = AddTaskWidget(self.service)
         self.addCleanup(widget.close)
         widget.task.title.setText("Submit applications")
         widget.task.category.setCurrentIndex(widget.task.category.findData("work"))
         widget.task.role.setCurrentIndex(widget.task.role.findData("Volunteer"))
         widget.already_finished.setChecked(True)
-        self.assertEqual(widget.stack.currentIndex(), 1)
-        self.assertEqual(widget.completed.outcome.toPlainText(), "Submit applications")
-        self.assertEqual(widget.completed.category.currentData(), "work")
-        self.assertEqual(widget.completed.role.currentData(), "Volunteer")
-        widget.completed.outcome.setPlainText("Submitted three applications")
+        self.assertFalse(widget.task.completion_details.isHidden())
+        self.assertFalse(widget.task.title.isHidden())
+        self.assertEqual(widget.task.completion_details.outcome.toPlainText(), "")
+        self.assertEqual(widget.task.category.currentData(), "work")
+        self.assertEqual(widget.task.role.currentData(), "Volunteer")
+        widget.task.completion_details.outcome.setPlainText("Submitted three applications")
         widget.already_finished.setChecked(False)
         self.assertEqual(widget.task.title.text(), "Submit applications")
         widget.already_finished.setChecked(True)
-        self.assertEqual(widget.completed.outcome.toPlainText(), "Submitted three applications")
+        self.assertEqual(widget.task.completion_details.outcome.toPlainText(), "Submitted three applications")
 
     def test_measurement_fields_follow_choice(self):
         widget = AddTaskWidget(self.service)
         self.addCleanup(widget.close)
-        form = widget.completed
+        widget.already_finished.setChecked(True)
+        form = widget.task.completion_details
         self.assertFalse(form.form_layout.isRowVisible(form.measure))
         self.assertFalse(form.form_layout.isRowVisible(form.quantity))
         self.assertFalse(form.form_layout.isRowVisible(form.remind_on))
