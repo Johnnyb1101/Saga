@@ -298,6 +298,12 @@ Both scripts run `Saga.exe --smoke-test REPORT_PATH` from outside the checkout.
 This check uses invented records in a temporary archive and writes a JSON
 report. It checks bundled resources, saving, exports, settings, and the window.
 The install script only updates shortcuts after the installed copy passes.
+If the existing **Saga Morning Brief** scheduled task is present, installation
+also points its launch action at the new app. Its time, missed-run behavior,
+account, and other settings are preserved; installation does not create a task
+or change the separate backup schedule. If updating the morning task fails,
+the installer reports the error and attempts to restore its previous action
+and both shortcuts. Any restoration failures are reported explicitly.
 
 The installed app uses the same saved archive selection and settings as the
 desktop preview. Installation does not move your records: if your selected
