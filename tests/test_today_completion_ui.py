@@ -73,7 +73,8 @@ class TodayCompletionUiTests(unittest.TestCase):
         with closing(db.connect(self.database)) as con:
             self.assertEqual(con.execute("SELECT count(*) FROM tasks WHERE status='done'").fetchone()[0], 5)
             self.assertEqual(con.execute('SELECT count(*) FROM completions').fetchone()[0], 5)
-        self.assertEqual(self.window.tabs.count(), 2)
+        self.assertEqual(self.window.tabs.count(), 3)
+        self.assertEqual(self.window.tabs.tabText(2), 'History & Reports')
         self.assertEqual(self.window.entry.task.title.text(), 'Keep unsaved task')
         self.assertEqual(self.window.entry.task.completion_details.outcome.toPlainText(), 'Keep unsaved completed work')
 

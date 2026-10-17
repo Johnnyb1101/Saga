@@ -29,6 +29,7 @@ from saga.desktop.appearance import DESKTOP_STYLE, app_icon, heading
 from saga.desktop.backup_settings import BackupSettings
 from saga.desktop.backups import BackupController
 from saga.desktop.completion import CompletionDialog
+from saga.desktop.history import HistoryWidget
 from saga.desktop.settings import SettingsStore, default_database
 from saga.desktop.task_entry import AddTaskWidget
 from saga.desktop.themes import ThemePicker, apply_theme
@@ -139,6 +140,7 @@ class MainWindow(QMainWindow):
         self.service = None
         self.capture = None
         self.entry = None
+        self.history = None
         self.backup_controller = BackupController(self.settings_store, self)
         self.backup_controller.statusChanged.connect(self._backup_status_changed)
         self._saved_database_path = None
@@ -201,6 +203,7 @@ class MainWindow(QMainWindow):
         self.backup_status.hide()
         layout.addWidget(self.backup_status)
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self._tab_changed)
         self.today_page = QWidget()
         today_layout = QVBoxLayout(self.today_page)
         toolbar = QHBoxLayout()
@@ -304,6 +307,11 @@ class MainWindow(QMainWindow):
         self.service = service
         self._saved_database_path = database
         self.backup_controller.configure(database)
+        if self.history is not None:
+            previous_history = self.history
+            self.history = None
+            self.tabs.removeTab(self.tabs.indexOf(previous_history))
+            previous_history.deleteLater()
         if self.entry is not None:
             index = self.tabs.indexOf(self.entry)
             self.tabs.removeTab(index)
@@ -317,11 +325,17 @@ class MainWindow(QMainWindow):
         self.entry.saved.connect(self.backup_controller.request_backup)
         self.entry.task.category.categoriesChanged.connect(self.backup_controller.request_backup)
         self.tabs.addTab(self.entry, "Add Task")
+        self.history = HistoryWidget(service)
+        self.tabs.addTab(self.history, "History & Reports")
         self.tabs.setCurrentWidget(self.today_page)
         self.archive_label.setText("Your Saga")
         self.setup_error.clear()
         self.pages.setCurrentWidget(self.archive_page)
         self.refresh_today()
+
+    def _tab_changed(self, *_):
+        if self.history is not None and self.tabs.currentWidget() is self.history:
+            self.history.refresh()
 
     def _open_task(self, task_id):
         if self.service is None:
@@ -365,6 +379,8 @@ class MainWindow(QMainWindow):
             return False
         self.service = ArchiveService(self.service.database, directory)
         self.entry.service = self.service
+        if self.history is not None:
+            self.history.service = self.service
         return True
 
     def _system_theme_changed(self, *_):

@@ -219,6 +219,15 @@ optional result details, numbers and review flag. The task text becomes the
 completion description; any result details are added to it. Checking or
 unchecking keeps all your entries. Scheduling controls are inactive while
 recording completed work. Preview and save use the same buttons in either case.
+
+**History & Reports** shows accomplishments and totals for a chosen date range.
+Use **From** and **Through** dates (both dates are included), or choose **This month**,
+**This year**, or **All time**. Reports use the date the work was completed,
+including backdated entries, and count only the latest corrected version of
+each accomplishment. Optional category and role filters include historical
+categories and roles. Totals show completed work, review flags, measurements
+grouped by what was counted, and completions by category. Open an accomplishment
+to read its full details. Reports are read-only and do not change your archive.
 Both completion routes ask **Can you put a number to this?** Choose **Yes** to
 enter an amount and what you counted, **No number needed**, or **I’ll add a
 number later** with a reminder date. Relevant fields appear only when needed.

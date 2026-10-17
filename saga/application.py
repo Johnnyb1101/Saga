@@ -7,7 +7,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
-from saga import db, export, reads, writes
+from saga import analytics, db, export, reads, writes
 from saga.recurrence import occurrence_date
 
 
@@ -193,6 +193,44 @@ class ArchiveService:
                 'roles': {category: [row['name'] for row in reads.duties(con, category)]
                           for category in categories},
                 'measures': [row['name'] for row in reads.measures(con)],
+            }
+
+    def history_filters(self):
+        """Include archived references and names preserved in completion snapshots."""
+        with closing(db.connect(self.database)) as con:
+            con.execute('BEGIN')
+            categories = {row['name'] for row in reads.categories(con)}
+            categories.update(row['category'] for row in con.execute(
+                'SELECT DISTINCT category FROM completions'))
+            roles = {row['name'] for row in reads.duties(con)}
+            roles.update(row['duty'] for row in con.execute(
+                'SELECT DISTINCT duty FROM completions WHERE duty IS NOT NULL'))
+            return {
+                'categories': sorted(categories, key=str.casefold),
+                'roles': sorted(roles, key=str.casefold),
+            }
+
+    def history_report(self, since=None, until=None, category=None, duty=None):
+        """Read historical counts and latest completion snapshots in one transaction."""
+        for label, value in (('Start date', since), ('End date', until)):
+            if value is not None:
+                try:
+                    parsed = dt.date.fromisoformat(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f'{label} must use YYYY-MM-DD') from None
+                if not isinstance(value, str) or parsed.isoformat() != value:
+                    raise ValueError(f'{label} must use YYYY-MM-DD')
+        if since is not None and until is not None and since > until:
+            raise ValueError('Start date must not be after end date')
+        with closing(db.connect(self.database)) as con:
+            con.execute('BEGIN')
+            scope = {'since': since, 'until': until, 'category': category, 'duty': duty}
+            return {
+                **scope,
+                'summary': dict(analytics.volume(con, **scope)),
+                'measures': [dict(row) for row in analytics.measure_totals(con, **scope)],
+                'categories': [dict(row) for row in analytics.completions_by_category(con, **scope)],
+                'accomplishments': [dict(row) for row in reads.completion_list(con, **scope)],
             }
 
     def category_options(self):
