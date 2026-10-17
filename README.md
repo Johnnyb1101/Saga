@@ -937,6 +937,37 @@ python main.py --db data/demo.db review
 write functions the CLI uses, overwriting an existing demo database. It does
 not touch the default `data/saga.db`. Keep real records out of the demo file.
 
+### Three-year stress dataset
+
+For a larger, separate archive of invented records, run with Python 3.15:
+
+```powershell
+.\.venv\Scripts\python.exe seed_stress.py --db data/stress-demo.db --records 10000 --seed 42
+.\.venv\Scripts\python.exe stress_report.py --db data/stress-demo.db
+```
+
+The generator creates roughly three years of varied accomplishments, numbers,
+categories, roles, projects, recurring tasks, cancellations and corrections.
+It also writes `data/stress-demo.expected.json`, an independent ledger built
+from the planned inputs. A fixed `--seed` and `--end-date YYYY-MM-DD` reproduce
+the same generated completion evidence; recording timestamps and future
+measurement reminders reflect the run date.
+Change `--records` to adjust the workload. Both tools refuse to overwrite their
+output files: choose a new database name for another run.
+
+The checker compares actual History & Reports results with independently
+calculated counts, separate measurement totals and individual records. It checks
+yearly, monthly, category, role and date-boundary scopes, then writes
+`data/stress-demo.report.json` and the readable `data/stress-demo.report.txt`.
+The text report includes activity by year and month, category and role counts,
+measurement totals, and local service-query timings. Query timings exclude
+desktop rendering and do not predict performance on another machine.
+
+Generated files remain outside version control. These commands do not modify
+your real archive, exports, desktop selection or scheduled tasks. You can choose
+the invented archive through **Settings → Advanced** to browse it manually;
+remember to select your real archive again afterward.
+
 ## Morning brief and exports
 
 Export destination precedence is **explicit `export --out DIR`**, then
