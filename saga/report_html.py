@@ -67,7 +67,7 @@ def _fact_link(fact_id, evidence):
     if fact_id not in evidence["facts"]:
         raise ValueError("report references an unknown fact")
     fact = evidence["facts"][fact_id]
-    return f'<a href="#fact-{_html(fact_id)}">{_html(fact["display"])}</a>'
+    return f'<a href="evidence.json" title="Fact ID: {_html(fact_id)}">{_html(fact["display"])}</a>'
 
 
 def _table(headers, rows):
@@ -83,10 +83,6 @@ def _measurement_table(rows, evidence):
         (_html(_display(row["label"])), _fact_link(row["fact_id"], evidence), _html(row["occasions"]))
         for row in rows
     ])
-
-
-def _record_anchor(record_id):
-    return f"record-{_html(record_id)}"
 
 
 def render_html(evidence, narrative=None):
@@ -108,16 +104,15 @@ def render_html(evidence, narrative=None):
     scope = evidence["scope"]
     summary = evidence["summary"]
     measurements = evidence["measurements"]
-    records = evidence["records"]
     parts = ["<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
              '<meta name="viewport" content="width=device-width, initial-scale=1">',
              f"<title>Accomplishment report {_html(evidence['report_id'])}</title>",
              """<style>
-*{box-sizing:border-box}body{margin:0;background:#f5f4f0;color:#242a2e;font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:1080px;margin:auto;padding:2rem 1.2rem 5rem}h1,h2,h3{line-height:1.2;color:#163045}h1{font-size:2.4rem}h2{margin-top:2.5rem;border-bottom:2px solid #bac8ce;padding-bottom:.35rem}h3{margin-top:1.8rem}p,li{max-width:75ch}a{color:#075c83}a:hover{text-decoration-thickness:2px}.lede,.note{background:#e9f0f1;border-left:4px solid #4e7b89;padding:.8rem 1rem}.draft{background:#fff8e8;border:1px solid #d6b774;padding:1rem 1.3rem}.cards{display:flex;flex-wrap:wrap;gap:1rem}.card{background:#fff;border:1px solid #d9e0e2;border-radius:.4rem;padding:.8rem 1rem;min-width:13rem}.card strong{display:block;font-size:1.5rem}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fff;margin:.6rem 0 1.2rem}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d9e0e2;padding:.55rem .7rem}th{background:#e9f0f1}details{background:#fff;border:1px solid #d9e0e2;border-radius:.3rem;padding:.6rem .8rem;margin:.5rem 0}summary{cursor:pointer;font-weight:600}.facts{columns:2;column-gap:2rem}.facts li{break-inside:avoid;margin-bottom:.65rem}.small{color:#52616b;font-size:.9rem}.empty{color:#52616b}@media(max-width:650px){.facts{columns:1}h1{font-size:1.9rem}}
+*{box-sizing:border-box}body{margin:0;background:#f5f4f0;color:#242a2e;font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:900px;margin:auto;padding:2rem 1.2rem 5rem}h1,h2,h3{line-height:1.2;color:#163045}h1{font-size:2.4rem}h2{margin-top:2.5rem;border-bottom:2px solid #bac8ce;padding-bottom:.35rem}h3{margin-top:1.8rem}p,li{max-width:75ch}a{color:#075c83}a:hover{text-decoration-thickness:2px}.lede{background:#e9f0f1;border-left:4px solid #4e7b89;padding:.8rem 1rem}.draft{background:#fff8e8;border:1px solid #d6b774;padding:1rem 1.3rem}.cards{display:flex;flex-wrap:wrap;gap:1rem}.card{background:#fff;border:1px solid #d9e0e2;border-radius:.4rem;padding:.8rem 1rem;min-width:13rem}.card strong{display:block;font-size:1.5rem}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fff;margin:.6rem 0 1.2rem}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d9e0e2;padding:.55rem .7rem}th{background:#e9f0f1}details{background:#fff;border:1px solid #d9e0e2;border-radius:.3rem;padding:.6rem .8rem;margin:.5rem 0}summary{cursor:pointer;font-weight:600}.small{color:#52616b;font-size:.9rem}.empty{color:#52616b}@media(max-width:650px){h1{font-size:1.9rem}}
 </style></head><body><main>""",
              "<h1>Accomplishment report</h1>",
              f"<p class=\"small\">Report ID: <code>{_html(evidence['report_id'])}</code></p>",
-             '<p class="lede">Counts and totals below come from verified completion records. Each measure keeps its own unit. Unknown measurements are not counted as zero. Corrections use the latest completion revision.</p>',
+             '<p class="lede">Saga calculates these counts and totals from verified completion records; an AI writer does not supply the numbers. Each measure keeps its own unit. Unknown measurements are not counted as zero. Corrections use the latest completion revision. <a href="evidence.json">Open full evidence</a> for monthly data, facts, and source records.</p>',
              "<h2>Scope</h2><dl>"]
     labels = (("since", "From (inclusive)"), ("until", "Through (inclusive)"),
               ("category", "Category"), ("duty", "Role"))
@@ -138,9 +133,12 @@ def render_html(evidence, narrative=None):
         parts.append(f"<section><h3>{_html(measure['measure'])}</h3>")
         parts.append(f"<p>Total: <strong>{_fact_link(measure['fact_id'], evidence)}</strong> "
                      f"across {_html(measure['occasions'])} occasions.</p>")
-        for key, heading in (("by_category", "By category"), ("by_role", "By role"), ("by_month", "By month")):
-            parts.append(f"<h4>{heading}</h4>")
-            parts.append(_measurement_table(measure[key], evidence))
+        parts.append("<h4>By category</h4>")
+        parts.append(_measurement_table(measure["by_category"], evidence))
+        if measure["by_role"]:
+            parts.append("<details><summary>Show more: by role</summary>")
+            parts.append(_measurement_table(measure["by_role"], evidence))
+            parts.append("</details>")
         parts.append("</section>")
 
     if narrative is not None:
@@ -155,20 +153,5 @@ def render_html(evidence, narrative=None):
                 parts.append("</p>")
         parts.append("</section>")
 
-    parts.append('<h2 id="facts">Fact references</h2><p class="small">These values are computed from the linked source records.</p><ol class="facts">')
-    for fact_id, fact in evidence["facts"].items():
-        source_links = ", ".join(f'<a href="#{_record_anchor(source_id)}">{_html(source_id)}</a>'
-                                 for source_id in fact.get("source_record_ids", []))
-        parts.append(f'<li id="fact-{_html(fact_id)}"><strong>{_html(fact["label"])}</strong>: '
-                     f'{_html(fact["display"])}<br><span class="small">Source records: {source_links or "none"}</span></li>')
-    parts.append("</ol><h2>Completion records</h2>")
-    for record in records:
-        record_id = record["id"]
-        title = record.get("outcome") or record.get("task_title") or "Completion"
-        parts.append(f'<details id="{_record_anchor(record_id)}"><summary>#{_html(record_id)} · '
-                     f'{_html(record.get("completed_at", ""))} · {_html(title)}</summary>')
-        parts.append(_table(("Field", "Saved value"), [(_html(key.replace("_", " ")), _html(_display(value)))
-                                                   for key, value in record.items()]))
-        parts.append("</details>")
     parts.append("</main></body></html>")
     return "".join(parts)

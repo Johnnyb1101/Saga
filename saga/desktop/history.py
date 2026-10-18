@@ -1,19 +1,25 @@
 """Read-only desktop history and reports."""
 
+import datetime as dt
 import sqlite3
+from pathlib import Path
+from uuid import uuid4
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -22,6 +28,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from report_bundle import publish
 
 
 def _label(text=""):
@@ -102,6 +110,9 @@ class HistoryWidget(QWidget):
         self.this_year_button = QPushButton("This year")
         self.all_time_button = QPushButton("All time")
         self.show_report_button = QPushButton("Show report")
+        self.save_report_button = QPushButton("Save readable report")
+        self.save_report_button.setToolTip("Save a short report using the dates and filters selected above")
+        self.save_report_button.clicked.connect(self._save_readable_report)
         self.this_month_button.clicked.connect(self._this_month)
         self.this_year_button.clicked.connect(self._this_year)
         self.all_time_button.clicked.connect(self._all_time)
@@ -156,6 +167,7 @@ class HistoryWidget(QWidget):
         filters.addWidget(self.role_filter)
         range_layout.addLayout(filters)
         range_layout.addWidget(self.show_report_button)
+        range_layout.addWidget(self.save_report_button)
         body.addWidget(range_group)
         body.addWidget(self.scope_label)
         body.addWidget(self.status_label)
@@ -169,6 +181,38 @@ class HistoryWidget(QWidget):
         body.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll)
+
+    def _save_readable_report(self):
+        """Save a fresh verified snapshot using the currently visible controls."""
+        since = self.from_date.date().toString("yyyy-MM-dd") if self.use_from.isChecked() else None
+        until = self.to_date.date().toString("yyyy-MM-dd") if self.use_to.isChecked() else None
+        if since is not None and until is not None and since > until:
+            self.status_label.setText("From must be on or before Through.")
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Choose where to save the report")
+        if not folder:
+            return
+        destination = Path(folder) / f"Saga-report-{dt.datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}"
+        self.save_report_button.setEnabled(False)
+        try:
+            output = publish(self.service.database, destination, since=since, until=until,
+                             category=self.category_filter.currentData(),
+                             duty=self.role_filter.currentData())
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.status_label.setText(f"Could not save report: {exc} Partial files may remain in {destination}.")
+            return
+        finally:
+            self.save_report_button.setEnabled(True)
+        report_path = output / "report.html"
+        self.status_label.setText(f"Report saved: {report_path}")
+        answer = QMessageBox.question(
+            self, "Report saved", "Your report is ready. Open it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if (answer == QMessageBox.StandardButton.Yes
+                and not QDesktopServices.openUrl(QUrl.fromLocalFile(str(report_path)))):
+            self.status_label.setText(f"Report saved, but could not open the browser. Open {report_path}")
 
     def _this_month(self):
         today = QDate.currentDate()

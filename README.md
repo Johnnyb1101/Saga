@@ -970,7 +970,14 @@ remember to select your real archive again afterward.
 
 ### Readable report and agent evidence package
 
-Generate a self-contained HTML report for a chosen archive and inclusive date
+In **History & Reports**, select your dates, category and role, then choose
+**Save readable report**. Choose a folder; Saga creates a new report subfolder
+and offers to open the HTML report. It uses the currently selected controls,
+even if you have not pressed Show report. Both end dates are included.
+
+All final counts and totals are calculated and checked by Saga code, without AI.
+
+You can also generate an HTML report for a chosen archive and inclusive date
 range, using a new output folder:
 
 ```powershell
@@ -978,8 +985,9 @@ range, using a new output folder:
 ```
 
 Open `data/readable-report/report.html` in a browser. The fixed report shows
-recorded measurements by category, role and month, with links back to the source
-accomplishments. Exact measurement names stay separate: `hours`, `hours spent`
+final counts and measurement totals with a category breakdown. Role breakdowns
+are tucked under **Show more**. Monthly totals and individual accomplishments
+remain in the supporting evidence file rather than lengthening the report. Exact measurement names stay separate: `hours`, `hours spent`
 and `hours saved` are different measures. A generic `hours` entry does not prove
 how all working time was spent. Missing measurements are not treated as zero.
 Optional `--category` and `--role` filters apply to the same snapshot. Omit the

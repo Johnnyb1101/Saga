@@ -43,18 +43,23 @@ def narrative():
 
 
 class ReportHtmlTests(unittest.TestCase):
-    def test_fixed_report_escapes_records_and_displays_breakdowns_without_narrative(self):
+    def test_compact_report_escapes_labels_and_links_to_full_evidence(self):
         html = render_html(evidence())
         self.assertIn("Measured results", html)
         self.assertIn("By category", html)
-        self.assertIn("By role", html)
-        self.assertIn("By month", html)
+        self.assertIn("<summary>Show more: by role</summary>", html)
         self.assertIn("Corrections use the latest completion revision", html)
-        self.assertIn('href="#record-11"', html)
-        self.assertIn('id="fact-f-total"', html)
+        self.assertIn('href="evidence.json" title="Fact ID: f-total"', html)
+        self.assertIn('href="evidence.json" title="Fact ID: f-cat"', html)
         self.assertIn("&lt;widgets&gt;", html)
         self.assertIn("&lt;work&gt;", html)
-        self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;", html)
+        self.assertNotIn("By month", html)
+        self.assertNotIn("Fact references</h2>", html)
+        self.assertNotIn("Completion records</h2>", html)
+        self.assertNotIn("2024-01</td>", html)
+        self.assertNotIn("Source records", html)
+        self.assertNotIn("onerror", html)
+        self.assertNotIn("record-11", html)
         self.assertNotIn("<img", html)
         self.assertNotIn("Agent narrative", html)
         self.assertNotIn("<script", html)
@@ -62,8 +67,15 @@ class ReportHtmlTests(unittest.TestCase):
     def test_valid_narrative_uses_current_fact_and_is_visibly_a_draft(self):
         html = render_html(evidence(), narrative())
         self.assertIn("Agent narrative — draft for review", html)
-        self.assertIn('href="#fact-f-total"', html)
+        self.assertIn('href="evidence.json" title="Fact ID: f-total"', html)
         self.assertIn("The wording and interpretation still need human review", html)
+
+    def test_narrative_text_is_escaped(self):
+        case = narrative()
+        case["sections"][0]["paragraphs"][0][0]["text"] = '<img src=x onerror="alert()">'
+        html = render_html(evidence(), case)
+        self.assertIn('&lt;img src=x onerror=&quot;alert()&quot;&gt;', html)
+        self.assertNotIn("<img", html)
 
     def test_unknown_fact_extra_key_and_mismatched_report_are_rejected(self):
         cases = []
@@ -105,7 +117,7 @@ class ReportHtmlTests(unittest.TestCase):
         html = render_html(data)
         self.assertIn('<td>No role assigned</td>', html)
         self.assertIn('<td>Role: No role</td>', html)
-        self.assertIn('href="#fact-f-cat"', html)
+        self.assertIn('href="evidence.json" title="Fact ID: f-cat"', html)
 
     def test_narrative_size_is_bounded(self):
         case = narrative()
