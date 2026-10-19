@@ -968,6 +968,54 @@ your real archive, exports, desktop selection or scheduled tasks. You can choose
 the invented archive through **Settings → Advanced** to browse it manually;
 remember to select your real archive again afterward.
 
+### Optional OpenAI drafting
+
+In **History & Reports**, choose your dates, filters and **Prepare for** format,
+then select **Draft with AI**. EPB/CV first ask which accomplishments to include.
+Opening the dialog makes no OpenAI request. Review **Data to send**, enter your
+own API key, and choose **Send and draft**. The model starts as `gpt-4.1-mini`;
+you can change it before sending if your account supports another model with
+Structured Outputs. API usage may incur charges.
+
+General drafts send aggregate facts; EPB/CV send only selected saved titles,
+outcomes, categories, roles and measured fact references. The exact request body
+is visible before sending, excluding its authentication header. The archive,
+local paths and unrelated source-record fields are not uploaded. Source wording
+may contain private information, so review it before approving each send.
+
+Saga requests wording with fact references, then inserts the verified numbers.
+Unknown references, literal digits in prose, mismatched snapshots/selections and
+invalid responses are rejected. Wording, inferred meaning and spelled-out claims
+still need human review. The report uses the snapshot captured when its dialog
+opened, even if the archive changes afterward; reopen to use newer data.
+Choose **Save reviewed report** only after reviewing the draft. The fixed report
+and full local evidence are included in the new report folder.
+
+Keys entered for use are kept in memory for the running Saga session only.
+**Remember key on this PC** is optional and starts off. Check it and choose
+**Save / update key** to store a key in Windows Credential Manager, under
+`Saga/OpenAI/report-drafting`, scoped to your Windows user on this PC. The target
+stays the same across app installations. No key is stored in Saga settings,
+archives, reports, Saga backups, or logs. Unchecking Remember does not delete an
+existing saved key. **Remove saved key** deletes only Saga's credential, cancels
+a pending request, and clears the current session key. It does not revoke the
+key at OpenAI. **Forget session key** clears memory references but leaves any
+saved Windows credential available. Storage failures never fall back to plaintext;
+a failed update/removal may leave the previous stored key in place.
+
+Windows storage does not isolate the key from other software running as you or
+from a compromised computer. Keys must enter process memory to authenticate;
+Python/Qt cannot guarantee secure erasure of every copy, and Windows may page
+memory or include it in a dump. If a key is exposed, revoke it with the provider.
+
+Requests use the fixed official HTTPS endpoint, reject redirects/certificate
+errors, disable cookies/cache/proxy use, and have a deadline and size limits.
+There are no automatic retries. Cancellation stops waiting but cannot guarantee
+that OpenAI has not already processed or charged for a request. The request uses
+`store: false`, which is not a guarantee of zero retention; see
+[OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data).
+Saga remains usable without AI. Provider failures do not change accomplishments.
+
 ### Readable report and agent evidence package
 
 In **History & Reports**, select your dates, category and role, then choose

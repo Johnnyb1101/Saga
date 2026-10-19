@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from saga.preparation import build_preparation, preparation_guide
@@ -43,12 +44,25 @@ No network calls are made by the report tools.
 '''
 
 
-def publish(database, destination, *, since=None, until=None, category=None, duty=None, narrative=None,
-            report_format='general', selected_ids=None, expected_records=None):
-    """Validate and render first, then exclusively create a new report folder."""
-    destination = Path(destination).absolute()
-    if os.path.lexists(destination):
-        raise FileExistsError(f'Report folder already exists: {destination}')
+@dataclass(frozen=True)
+class ReportSnapshot:
+    """A private serialized copy: callers receive fresh values, never shared state."""
+    _payload: str = field(repr=False)
+
+    def unpack(self):
+        contents = json.loads(self._payload)
+        return contents['evidence'], contents['preparation']
+
+    def for_format(self, report_format, selected_ids=None):
+        evidence, _ = self.unpack()
+        preparation = build_preparation(evidence, report_format, selected_ids)
+        return ReportSnapshot(json.dumps({'evidence': evidence, 'preparation': preparation},
+                                         ensure_ascii=False, allow_nan=False))
+
+
+def create_snapshot(database, *, since=None, until=None, category=None, duty=None,
+                    report_format='general', selected_ids=None, expected_records=None):
+    """Freeze one verified scope before preview, sending, or saving."""
     evidence = build_evidence(database, since=since, until=until, category=category, duty=duty)
     preparation = build_preparation(evidence, report_format, selected_ids)
     if expected_records is not None:
@@ -57,12 +71,34 @@ def publish(database, destination, *, since=None, until=None, category=None, dut
         if (set(expected) != set(selected_ids or [])
                 or any(current.get(record_id) != row for record_id, row in expected.items())):
             raise ValueError('Selected accomplishments changed. Choose them again before saving.')
+    return ReportSnapshot(json.dumps({'evidence': evidence, 'preparation': preparation},
+                                     ensure_ascii=False, allow_nan=False))
+
+
+def publish(database, destination, *, since=None, until=None, category=None, duty=None, narrative=None,
+            report_format='general', selected_ids=None, expected_records=None):
+    """Offline wrapper: freeze the archive, then publish only that snapshot."""
+    if os.path.lexists(destination):
+        raise FileExistsError(f'Report folder already exists: {destination}')
+    snapshot = create_snapshot(database, since=since, until=until, category=category, duty=duty,
+                               report_format=report_format, selected_ids=selected_ids,
+                               expected_records=expected_records)
+    draft = json.loads(Path(narrative).read_text(encoding='utf-8')) if narrative is not None else None
+    return publish_snapshot(snapshot, destination, narrative=draft)
+
+
+def publish_snapshot(snapshot, destination, *, narrative=None):
+    """Publish the original approved snapshot without rereading any archive."""
+    destination = Path(destination).absolute()
+    if os.path.lexists(destination):
+        raise FileExistsError(f'Report folder already exists: {destination}')
+    evidence, preparation = snapshot.unpack()
+    report_format = preparation['report_format']
     writer_input = agent_input(evidence)
     if report_format != 'general':
         writer_input['preparation'] = preparation
-    draft = None
-    if narrative is not None:
-        draft = json.loads(Path(narrative).read_text(encoding='utf-8'))
+    draft = narrative
+    if draft is not None:
         validate_narrative(draft, evidence, preparation)
     guide = AGENT_GUIDE
     if report_format != 'general':

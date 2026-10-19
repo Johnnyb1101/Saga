@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from report_bundle import publish
+from report_bundle import create_snapshot, publish
 from saga.desktop.report_selection import AccomplishmentSelectionDialog
 
 
@@ -115,6 +115,8 @@ class HistoryWidget(QWidget):
         self.report_format.setAccessibleName("Prepare report for")
         for label, value in (("General report", "general"), ("EPB", "epb"), ("CV", "cv")):
             self.report_format.addItem(label, value)
+        self.ai_draft_button = QPushButton("Draft with AI")
+        self.ai_draft_button.clicked.connect(self._draft_with_ai)
         self.save_report_button = QPushButton("Save readable report")
         self.save_report_button.setToolTip("Save a short report using the dates and filters selected above")
         self.save_report_button.clicked.connect(self._save_readable_report)
@@ -177,6 +179,7 @@ class HistoryWidget(QWidget):
         formats.addWidget(self.report_format)
         range_layout.addLayout(formats)
         range_layout.addWidget(self.save_report_button)
+        range_layout.addWidget(self.ai_draft_button)
         body.addWidget(range_group)
         body.addWidget(self.scope_label)
         body.addWidget(self.status_label)
@@ -190,6 +193,37 @@ class HistoryWidget(QWidget):
         body.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll)
+
+    def _draft_with_ai(self):
+        from saga.desktop.ai_draft import AIDraftDialog
+
+        since = self.from_date.date().toString("yyyy-MM-dd") if self.use_from.isChecked() else None
+        until = self.to_date.date().toString("yyyy-MM-dd") if self.use_to.isChecked() else None
+        if since is not None and until is not None and since > until:
+            self.status_label.setText("From must be on or before Through.")
+            return
+        try:
+            snapshot = create_snapshot(self.service.database, since=since, until=until,
+                                       category=self.category_filter.currentData(), duty=self.role_filter.currentData())
+            report_format = self.report_format.currentData()
+            if report_format != "general":
+                evidence, _ = snapshot.unpack()
+                if not evidence["records"]:
+                    self.status_label.setText("No accomplishments in this range to prepare.")
+                    return
+                picker = AccomplishmentSelectionDialog(evidence["records"], report_format, self)
+                accepted = picker.exec() == QDialog.DialogCode.Accepted
+                ids = picker.selected_ids() if accepted else None
+                picker.deleteLater()
+                if not ids:
+                    return
+                snapshot = snapshot.for_format(report_format, ids)
+        except (ValueError, OSError, sqlite3.Error):
+            self.status_label.setText("Could not prepare the report snapshot. Check the selected archive and range.")
+            return
+        dialog = AIDraftDialog(snapshot, self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def _save_readable_report(self):
         """Save a fresh verified snapshot using the currently visible controls."""
