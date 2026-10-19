@@ -977,6 +977,37 @@ even if you have not pressed Show report. Both end dates are included.
 
 All final counts and totals are calculated and checked by Saga code, without AI.
 
+**Prepare for** offers **General report**, **EPB**, and **CV**. General report
+keeps the compact totals. EPB and CV first ask you to choose accomplishments:
+EPB prepares saved action/result material with missing impact marked explicitly;
+CV groups selected accomplishment bullets by saved role/category. These are
+preparation drafts, not an official EPB form or a complete employment history.
+There are no assumed official section or character limits.
+
+The verified totals cover the full date range and filters, while the draft uses
+only your selected accomplishments. Saved text is source wording, not proof of
+any numbers it happens to mention. Only separately recorded quantities and
+Saga-calculated totals are verified numerical facts. No missing impact,
+qualification, employment dates, or measurements are invented.
+
+EPB/CV packages include `preparation.json` with selected source records and
+Saga-generated per-record measurement facts. Format-specific agent instructions
+are included, but no AI service is connected. You can use the preparation draft
+without AI. Optional agent wording stays a draft and must reference Saga facts
+for numbers.
+
+CLI example (repeat `--record-id` for each selected accomplishment):
+
+```powershell
+.\.venv\Scripts\python.exe report_bundle.py --db data/stress-demo.db --out data/epb-draft --format epb --record-id 42 --record-id 43
+```
+
+Use `--format cv` for a CV preparation draft; General report is the default.
+Selected records must belong to the chosen date range and filters. If a saved
+correction changes a record while you are choosing, a stale selection is refused;
+select again from the current records.
+
+
 You can also generate an HTML report for a chosen archive and inclusive date
 range, using a new output folder:
 

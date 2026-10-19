@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from report_bundle import publish
+from saga.desktop.report_selection import AccomplishmentSelectionDialog
 
 
 def _label(text=""):
@@ -110,6 +111,10 @@ class HistoryWidget(QWidget):
         self.this_year_button = QPushButton("This year")
         self.all_time_button = QPushButton("All time")
         self.show_report_button = QPushButton("Show report")
+        self.report_format = QComboBox()
+        self.report_format.setAccessibleName("Prepare report for")
+        for label, value in (("General report", "general"), ("EPB", "epb"), ("CV", "cv")):
+            self.report_format.addItem(label, value)
         self.save_report_button = QPushButton("Save readable report")
         self.save_report_button.setToolTip("Save a short report using the dates and filters selected above")
         self.save_report_button.clicked.connect(self._save_readable_report)
@@ -167,6 +172,10 @@ class HistoryWidget(QWidget):
         filters.addWidget(self.role_filter)
         range_layout.addLayout(filters)
         range_layout.addWidget(self.show_report_button)
+        formats = QHBoxLayout()
+        formats.addWidget(_label("Prepare for"))
+        formats.addWidget(self.report_format)
+        range_layout.addLayout(formats)
         range_layout.addWidget(self.save_report_button)
         body.addWidget(range_group)
         body.addWidget(self.scope_label)
@@ -189,15 +198,38 @@ class HistoryWidget(QWidget):
         if since is not None and until is not None and since > until:
             self.status_label.setText("From must be on or before Through.")
             return
+        report_format = self.report_format.currentData()
+        selected_ids = None
+        expected_records = None
+        if report_format != "general":
+            try:
+                snapshot = self.service.history_report(
+                    since=since, until=until, category=self.category_filter.currentData(),
+                    duty=self.role_filter.currentData())
+            except (ValueError, OSError, sqlite3.Error) as exc:
+                self.status_label.setText(f"Could not load accomplishments: {exc}")
+                return
+            if not snapshot["accomplishments"]:
+                self.status_label.setText("No accomplishments in this range to prepare.")
+                return
+            dialog = AccomplishmentSelectionDialog(snapshot["accomplishments"], report_format, self)
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            selected_ids = dialog.selected_ids() if accepted else None
+            dialog.deleteLater()
+            if not selected_ids:
+                return
+            expected_records = [row for row in snapshot["accomplishments"] if row["id"] in selected_ids]
         folder = QFileDialog.getExistingDirectory(self, "Choose where to save the report")
         if not folder:
             return
         destination = Path(folder) / f"Saga-report-{dt.datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}"
         self.save_report_button.setEnabled(False)
         try:
+            options = {} if report_format == "general" else {"report_format": report_format, "selected_ids": selected_ids,
+                "expected_records": expected_records}
             output = publish(self.service.database, destination, since=since, until=until,
                              category=self.category_filter.currentData(),
-                             duty=self.role_filter.currentData())
+                             duty=self.role_filter.currentData(), **options)
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status_label.setText(f"Could not save report: {exc} Partial files may remain in {destination}.")
             return

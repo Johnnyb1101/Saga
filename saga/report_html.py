@@ -2,6 +2,8 @@
 
 from html import escape
 
+from saga.preparation import validate_preparation
+
 
 def _html(value):
     return escape(str(value), quote=True)
@@ -16,19 +18,28 @@ def _require_keys(value, keys, name):
         raise ValueError(f"{name} has invalid fields")
 
 
-def validate_narrative(narrative, evidence):
+def validate_narrative(narrative, evidence, preparation=None):
     """Accept only bounded prose with references to facts in this exact report."""
-    _require_keys(narrative, ("schema_version", "report_id", "sections"), "narrative")
+    if preparation is not None:
+        preparation = validate_preparation(preparation, evidence)
+    selected_draft = preparation is not None and preparation["report_format"] != "general"
+    keys = ("schema_version", "report_id", "sections", "preparation_id") if selected_draft else (
+        "schema_version", "report_id", "sections")
+    _require_keys(narrative, keys, "narrative")
     if narrative["schema_version"] != 1 or type(narrative["schema_version"]) is not int:
         raise ValueError("unsupported narrative schema")
     if narrative["report_id"] != evidence.get("report_id") or not isinstance(narrative["report_id"], str):
         raise ValueError("narrative report ID does not match evidence")
+    if selected_draft and narrative["preparation_id"] != preparation["preparation_id"]:
+        raise ValueError("narrative preparation ID does not match selection")
     sections = narrative["sections"]
     if not isinstance(sections, list) or len(sections) > 20:
         raise ValueError("narrative has too many sections")
     facts = evidence.get("facts")
     if not isinstance(facts, dict):
         raise ValueError("report facts are missing")  # noqa: TRY004 - narrative API uses ValueError
+    if preparation is not None:
+        facts = facts | preparation["facts"]
     total_characters = 0
     total_segments = 0
     for section in sections:
@@ -63,7 +74,10 @@ def validate_narrative(narrative, evidence):
     return narrative
 
 
-def _fact_link(fact_id, evidence):
+def _fact_link(fact_id, evidence, preparation=None):
+    if preparation is not None and fact_id in preparation["facts"]:
+        fact = preparation["facts"][fact_id]
+        return f'<a href="preparation.json" title="Fact ID: {_html(fact_id)}">{_html(fact["display"])}</a>'
     if fact_id not in evidence["facts"]:
         raise ValueError("report references an unknown fact")
     fact = evidence["facts"][fact_id]
@@ -85,7 +99,51 @@ def _measurement_table(rows, evidence):
     ])
 
 
-def render_html(evidence, narrative=None):
+def _saved_text(field):
+    if field["status"] == "missing":
+        return '<span class="small">Missing from saved record</span>'
+    return _html(field["text"])
+
+
+def _selected_measurement(entry, evidence, preparation):
+    measurement = entry["measurement"]
+    if measurement is None:
+        return '<span class="small">No measured quantity saved.</span>'
+    return _fact_link(measurement["fact_id"], evidence, preparation)
+
+
+def _preparation_html(evidence, preparation):
+    if preparation["report_format"] == "general":
+        return ""
+    parts = [f'<section class="draft"><h2>{"EPB" if preparation["report_format"] == "epb" else "CV"} preparation — draft for review</h2>',
+             '<p class="small">Only the selected records below shape this draft. Saved wording is unverified source text, including any numbers or claims inside it. Linked measurements were calculated by Saga. Impact needs review. The verified summary and totals below cover the full filtered range.</p>']
+    if preparation["report_format"] == "epb":
+        for entry in preparation["selected_records"]:
+            record_id = entry["source_record"]["id"]
+            parts.append(f"<h3>Selected record {_html(record_id)}</h3><dl>")
+            parts.append(f'<dt>Action — saved task title</dt><dd>{_saved_text(entry["action"])}</dd>')
+            parts.append(f'<dt>Result — saved outcome</dt><dd>{_saved_text(entry["result"])}</dd>')
+            parts.append('<dt>Impact</dt><dd><span class="small">Missing — add supported impact before finalizing.</span></dd>')
+            parts.append(f'<dt>Saga measurement</dt><dd>{_selected_measurement(entry, evidence, preparation)}</dd></dl>')
+    else:
+        grouped = {}
+        for entry in preparation["selected_records"]:
+            row = entry["source_record"]
+            grouped.setdefault((row.get("duty"), row.get("category")), []).append(entry)
+        for (role, category), entries in grouped.items():
+            parts.append(f'<h3>Saved role: {_html(role) if role else "Unassigned"} · Category: {_html(category) if category else "Unassigned"}</h3><ul>')
+            for entry in entries:
+                record_id = entry["source_record"]["id"]
+                parts.append(f'<li>Record {_html(record_id)} — saved outcome: {_saved_text(entry["result"])} '
+                             f'| saved task title: {_saved_text(entry["action"])} '
+                             f'| Saga measurement: {_selected_measurement(entry, evidence, preparation)} '
+                             '| impact: missing from structured record.</li>')
+            parts.append('</ul>')
+    parts.append('</section>')
+    return "".join(parts)
+
+
+def render_html(evidence, narrative=None, preparation=None):
     """Return escaped, self-contained HTML from verified evidence.
 
     Narrative prose is a review draft. Fact references are checked, but prose
@@ -98,8 +156,10 @@ def render_html(evidence, narrative=None):
         raise ValueError("report evidence is not verified")
     if not isinstance(evidence.get("facts"), dict):
         raise ValueError("report facts are missing")  # noqa: TRY004 - report API uses ValueError
+    if preparation is not None:
+        preparation = validate_preparation(preparation, evidence)
     if narrative is not None:
-        validate_narrative(narrative, evidence)
+        validate_narrative(narrative, evidence, preparation)
 
     scope = evidence["scope"]
     summary = evidence["summary"]
@@ -119,14 +179,18 @@ def render_html(evidence, narrative=None):
     for key, label in labels:
         value = scope.get(key)
         parts.append(f"<dt>{_html(label)}</dt><dd>{_html(value) if value is not None else 'All'}</dd>")
-    parts.append("</dl><h2>Summary</h2><div class=\"cards\">")
+    parts.append("</dl>")
+    if preparation is not None:
+        parts.append(_preparation_html(evidence, preparation))
+    prepared_draft = preparation is not None and preparation["report_format"] != "general"
+    parts.append(f'<h2>{"Verified summary — full filtered range" if prepared_draft else "Summary"}</h2><div class="cards">')
     for key, value in summary.items():
         label = key.replace("_", " ").capitalize()
         fact_id = next((fid for fid, fact in evidence["facts"].items()
                         if fact.get("dimension") == "summary" and fact.get("group") == key), None)
         rendered = _fact_link(fact_id, evidence) if fact_id is not None else _html(value)
         parts.append(f'<div class="card"><span>{_html(label)}</span><strong>{rendered}</strong></div>')
-    parts.append("</div><h2>Measured results</h2>")
+    parts.append(f'</div><h2>{"Measured results — full filtered range" if prepared_draft else "Measured results"}</h2>')
     if not measurements:
         parts.append('<p class="empty">No measured quantities in this scope.</p>')
     for measure in measurements:
@@ -149,7 +213,7 @@ def render_html(evidence, narrative=None):
             for paragraph in section["paragraphs"]:
                 parts.append("<p>")
                 for segment in paragraph:
-                    parts.append(_html(segment["text"]) if "text" in segment else _fact_link(segment["fact"], evidence))
+                    parts.append(_html(segment["text"]) if "text" in segment else _fact_link(segment["fact"], evidence, preparation))
                 parts.append("</p>")
         parts.append("</section>")
 

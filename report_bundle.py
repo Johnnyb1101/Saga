@@ -8,6 +8,7 @@ import os
 import sqlite3
 from pathlib import Path
 
+from saga.preparation import build_preparation, preparation_guide
 from saga.report_html import render_html, validate_narrative
 from saga.reporting import agent_input, build_evidence
 
@@ -42,28 +43,49 @@ No network calls are made by the report tools.
 '''
 
 
-def publish(database, destination, *, since=None, until=None, category=None, duty=None, narrative=None):
+def publish(database, destination, *, since=None, until=None, category=None, duty=None, narrative=None,
+            report_format='general', selected_ids=None, expected_records=None):
     """Validate and render first, then exclusively create a new report folder."""
     destination = Path(destination).absolute()
     if os.path.lexists(destination):
         raise FileExistsError(f'Report folder already exists: {destination}')
     evidence = build_evidence(database, since=since, until=until, category=category, duty=duty)
+    preparation = build_preparation(evidence, report_format, selected_ids)
+    if expected_records is not None:
+        current = {row['id']: row for row in evidence['records']}
+        expected = {row['id']: row for row in expected_records}
+        if (set(expected) != set(selected_ids or [])
+                or any(current.get(record_id) != row for record_id, row in expected.items())):
+            raise ValueError('Selected accomplishments changed. Choose them again before saving.')
+    writer_input = agent_input(evidence)
+    if report_format != 'general':
+        writer_input['preparation'] = preparation
     draft = None
     if narrative is not None:
         draft = json.loads(Path(narrative).read_text(encoding='utf-8'))
-        validate_narrative(draft, evidence)
+        validate_narrative(draft, evidence, preparation)
+    guide = AGENT_GUIDE
+    if report_format != 'general':
+        guide = guide.replace('"report_id": "COPY_REPORT_ID",',
+                              '"report_id": "COPY_REPORT_ID", "preparation_id": "COPY_PREPARATION_ID",')
+        guide += ('\nCopy preparation_id from preparation.json exactly. The draft is bound to this '
+                  'format and selected accomplishments. Per-record facts are in preparation.facts; '
+                  'only those selected measurements may be used as individual numerical claims.\n')
     files = {
         'evidence.json': json.dumps(evidence, ensure_ascii=False, allow_nan=False, indent=2),
-        'agent-input.json': json.dumps(agent_input(evidence), ensure_ascii=False, allow_nan=False, indent=2),
-        'report.html': render_html(evidence, draft),
-        'agent-guide.txt': AGENT_GUIDE,
+        'agent-input.json': json.dumps(writer_input, ensure_ascii=False, allow_nan=False, indent=2),
+        'report.html': render_html(evidence, draft, preparation=preparation),
+        'agent-guide.txt': guide + f'\nPreparation format: {report_format.upper()}\n' + preparation_guide(report_format),
     }
+    if report_format != 'general':
+        files['preparation.json'] = json.dumps(preparation, ensure_ascii=False, allow_nan=False, indent=2)
     if draft is not None:
         files['narrative.json'] = json.dumps(draft, ensure_ascii=False, allow_nan=False, indent=2)
     payloads = {name: value.encode('utf-8') for name, value in files.items()}
     manifest = {
         'schema_version': 1, 'report_id': evidence['report_id'],
         'generated_at': dt.datetime.now(dt.UTC).isoformat(),
+        'report_format': report_format,
         'files': {name: hashlib.sha256(value).hexdigest() for name, value in payloads.items()},
     }
     destination.mkdir(parents=True, exist_ok=False)
@@ -86,7 +108,7 @@ def verify_package(destination):
     destination = Path(destination)
     manifest = json.loads((destination / 'manifest.json').read_text(encoding='utf-8'))
     required = {'evidence.json', 'agent-input.json', 'report.html', 'agent-guide.txt'}
-    permitted = required | {'narrative.json'}
+    permitted = required | {'narrative.json', 'preparation.json'}
     files = manifest.get('files')
     if (manifest.get('schema_version') != 1 or not isinstance(files, dict)
             or not required <= files.keys() or not files.keys() <= permitted):
@@ -99,6 +121,20 @@ def verify_package(destination):
         content = json.loads((destination / name).read_text(encoding='utf-8'))
         if content.get('report_id') != manifest.get('report_id'):
             raise ValueError('Report package mixes different evidence snapshots')
+    report_format = manifest.get('report_format', 'general')
+    if report_format not in ('general', 'epb', 'cv'):
+        raise ValueError('Invalid report format in package')
+    if report_format != 'general':
+        if 'preparation.json' not in files:
+            raise ValueError('Preparation file is missing')
+        evidence = json.loads((destination / 'evidence.json').read_text(encoding='utf-8'))
+        preparation = json.loads((destination / 'preparation.json').read_text(encoding='utf-8'))
+        expected = build_preparation(evidence, report_format, preparation.get('selected_ids'))
+        if preparation != expected:
+            raise ValueError('Preparation does not match verified evidence')
+        writer_input = json.loads((destination / 'agent-input.json').read_text(encoding='utf-8'))
+        if writer_input.get('preparation') != preparation:
+            raise ValueError('Agent preparation does not match report')
     return manifest
 
 
@@ -111,10 +147,14 @@ def main():
     parser.add_argument('--category')
     parser.add_argument('--role', dest='duty')
     parser.add_argument('--narrative', type=Path)
+    parser.add_argument('--format', choices=('general', 'epb', 'cv'), default='general', dest='report_format')
+    parser.add_argument('--record-id', type=int, action='append', dest='selected_ids',
+                        help='Accomplishment ID to include in EPB/CV; repeat to select more')
     args = parser.parse_args()
     try:
         output = publish(args.db, args.out, since=args.since, until=args.until,
-                         category=args.category, duty=args.duty, narrative=args.narrative)
+                         category=args.category, duty=args.duty, narrative=args.narrative,
+                         report_format=args.report_format, selected_ids=args.selected_ids)
     except (ValueError, OSError, sqlite3.Error) as exc:
         notes = '\n'.join(getattr(exc, '__notes__', []))
         parser.exit(1, f'Could not create report: {exc}\n{notes}\n')
