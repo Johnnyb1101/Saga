@@ -11,7 +11,7 @@ from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 HAS_QT = find_spec('PySide6') is not None
 if HAS_QT:
-    from PySide6.QtCore import QDate
+    from PySide6.QtCore import QCoreApplication, QDate, QEvent
     from PySide6.QtWidgets import QApplication
 
     from saga import db, export
@@ -33,11 +33,17 @@ class InlineCompletedEntryTests(unittest.TestCase):
         db.init_db(self.database)
         self.service = ArchiveService(self.database, self.root / 'exports')
         self.widget = AddTaskWidget(self.service)
-        self.addCleanup(self.widget.close)
+        self.addCleanup(self._close_widget, self.widget)
         self.form = self.widget.task
         self.details = self.form.completion_details
         self.form.title.setText('Reviewed invented applications')
         self.form.category.setCurrentIndex(self.form.category.findData('work'))
+
+    @staticmethod
+    def _close_widget(widget):
+        widget.close()
+        widget.deleteLater()
+        QCoreApplication.sendPostedEvents(widget, QEvent.Type.DeferredDelete)
 
     def finished(self):
         self.widget.already_finished.setChecked(True)
@@ -48,7 +54,11 @@ class InlineCompletedEntryTests(unittest.TestCase):
         self.form.show_preview()
         self.assertIsNotNone(self.form._preview_draft, self.form.status.text())
         self.form.save()
-        self.assertTrue(self.form._committed, self.form.status.text())
+        self.assertIn('Saved accomplishment #', self.form.status.text())
+        self.assertEqual(self.form.title.text(), '')
+        self.assertFalse(self.form._committed)
+        self.assertFalse(self.widget.already_finished.isChecked())
+        self.assertFalse(self.form.has_unsaved_draft)
 
     def rows(self, table):
         with closing(db.connect(self.database)) as con:
@@ -60,7 +70,18 @@ class InlineCompletedEntryTests(unittest.TestCase):
         self.save()
         self.assertEqual(self.rows('completions')[0]['outcome'], 'Reviewed invented applications')
         self.assertEqual(self.rows('tasks'), [])
-        self.assertFalse(self.form.has_unsaved_draft)
+
+    def test_two_accomplishments_can_be_saved_consecutively(self):
+        self.finished()
+        self.save()
+        self.form.title.setText('Filed invented documents')
+        self.finished()
+        self.details.outcome.setPlainText('Ready for review')
+        self.save()
+        self.assertEqual([row['outcome'] for row in self.rows('completions')],
+                         ['Reviewed invented applications',
+                          'Filed invented documents\n\nReady for review'])
+        self.assertEqual(self.rows('tasks'), [])
 
     def test_result_is_added_to_title_and_backdated_measurement_is_saved(self):
         self.finished()
@@ -133,7 +154,6 @@ class InlineCompletedEntryTests(unittest.TestCase):
         self.form.edit_draft()
         self.assertEqual(self.form.draft(), before)
         self.save()
-        self.form.reset_form()
         self.assertEqual(self.form.title.text(), '')
         self.assertEqual(self.details.outcome.toPlainText(), '')
         self.assertFalse(self.widget.already_finished.isChecked())

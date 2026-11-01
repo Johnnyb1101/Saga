@@ -47,7 +47,9 @@ class RecurrenceEndUiTests(unittest.TestCase):
         self.assertIn('2026-10-17', self.form.preview_text.toPlainText())
         self.assertIn('included', self.form.preview_text.toPlainText())
         self.form.save()
-        self.assertTrue(self.form._committed, self.form.status.text())
+        self.assertFalse(self.form._committed, self.form.status.text())
+        self.assertEqual(self.form.title.text(), "")
+        self.assertIn("Saved task #", self.form.status.text())
         rows = self.service.today(on='2026-10-16')['due_today']
         section = TodaySection('Tasks', ())
         self.addCleanup(section.close)
@@ -103,7 +105,9 @@ class RecurrenceEndUiTests(unittest.TestCase):
         self.form.show_preview()
         self.form.end_date.setDate(QDate(2026, 12, 31))
         self.form.save()
-        self.assertTrue(self.form._committed, self.form.status.text())
+        self.assertFalse(self.form._committed, self.form.status.text())
+        self.assertEqual(self.form.title.text(), "")
+        self.assertIn("Saved task #", self.form.status.text())
         with closing(db.connect(self.database)) as con:
             task = reads.open_tasks(con)[0]
             self.assertEqual(reads.recurrence_details(con, task['recurrence_id'])['end_date'],

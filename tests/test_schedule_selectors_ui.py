@@ -46,7 +46,9 @@ class ScheduleSelectorsUiTests(unittest.TestCase):
         self.form.show_preview()
         self.assertIsNotNone(self.form._preview_draft, self.form.status.text())
         self.form.save()
-        self.assertTrue(self.form._committed, self.form.status.text())
+        self.assertFalse(self.form._committed, self.form.status.text())
+        self.assertEqual(self.form.title.text(), "")
+        self.assertIn("Saved task #", self.form.status.text())
         with closing(db.connect(self.database)) as con:
             return dict(reads.open_tasks(con)[0])
 

@@ -53,10 +53,11 @@ class RecurringUiTests(unittest.TestCase):
         form.show_preview()
         self.assertIn('Every 2 weeks', form.preview_text.toPlainText())
         form.save()
-        self.assertTrue(form._committed, form.status.text())
+        self.assertFalse(form._committed, form.status.text())
+        self.assertEqual(form.title.text(), "")
+        self.assertIn("Saved task #", form.status.text())
         card = self.window.sections['due_today'].cards[0]
         self.assertIn('Every 2 weeks', card.details_label.text())
-        form.reset_form()
         self.assertFalse(form.repeat_task.isChecked())
         self.assertTrue(form.has_due_date.isEnabled())
         self.assertNotIn('repeat', form.draft())

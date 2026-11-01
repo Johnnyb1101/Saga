@@ -2,7 +2,7 @@
 
 import sqlite3
 
-from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtCore import QDate, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +30,7 @@ class TaskWidget(QWidget):
     """Keep an open task draft until the reviewed values are saved."""
 
     saved = Signal()
+    entry_started = Signal()
     NEW = object()
 
     def __init__(self, service, parent=None):
@@ -342,6 +343,8 @@ class TaskWidget(QWidget):
     def show_preview(self):
         if self._committed or self._saving:
             return
+        self.layout().removeWidget(self.status)
+        self.layout().insertWidget(self.layout().count() - 1, self.status)
         draft = self.draft()
         finished = self.already_finished.isChecked()
         if finished and not self.title.text().strip():
@@ -435,6 +438,13 @@ class TaskWidget(QWidget):
             self.status.setText(f"Saved accomplishment #{result.completion_id}." if self._preview_finished else
                                 f"Saved task #{result.task_id}.")
         self.saved.emit()
+        if not result.export_error:
+            confirmation = self.status.text()
+            if self.reset_form():
+                self.layout().insertWidget(0, self.status)
+                self.status.setText(confirmation)
+            else:
+                self.status.setText(f"{confirmation} {self.status.text()}")
 
     def retry_export(self):
         if not self._committed:
@@ -466,7 +476,7 @@ class TaskWidget(QWidget):
             self.reload_references()
         except (ValueError, OSError, sqlite3.Error) as exc:
             self.status.setText(f"Could not start a new draft: {exc}. The current view is still available.")
-            return
+            return False
         self._committed = False
         self._preview_draft = None
         self.form_group.show()
@@ -498,6 +508,8 @@ class TaskWidget(QWidget):
         self.status.clear()
         self._dirty = False
         self.title.setFocus()
+        self.entry_started.emit()
+        return True
 
 
 class AddTaskWidget(QWidget):
@@ -512,7 +524,9 @@ class AddTaskWidget(QWidget):
         self.already_finished = self.task.already_finished
         self.task.saved.connect(self.saved)
 
-        scroll = QScrollArea()
+        self.scroll = QScrollArea()
+        scroll = self.scroll
+        self.task.entry_started.connect(self._entry_started)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(self.task)
@@ -522,6 +536,13 @@ class AddTaskWidget(QWidget):
         heading.setObjectName("addTaskTitle")
         layout.addWidget(heading)
         layout.addWidget(scroll, 1)
+
+    def _entry_started(self):
+        self.scroll.verticalScrollBar().setValue(0)
+        QTimer.singleShot(0, self, self._scroll_to_start)
+
+    def _scroll_to_start(self):
+        self.scroll.verticalScrollBar().setValue(0)
 
     @property
     def service(self):

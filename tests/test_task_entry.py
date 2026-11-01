@@ -14,8 +14,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 PYSIDE6_AVAILABLE = find_spec("PySide6") is not None
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QDate
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtCore import QCoreApplication, QDate, QEvent
+    from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
 
     from saga import db
     from saga.application import ArchiveService
@@ -56,7 +56,13 @@ class TaskEntryTests(unittest.TestCase):
     def setUp(self):
         self.service = FakeService()
         self.widget = AddTaskWidget(self.service)
-        self.addCleanup(self.widget.close)
+        self.addCleanup(self._close_widget, self.widget)
+
+    @staticmethod
+    def _close_widget(widget):
+        widget.close()
+        widget.deleteLater()
+        QCoreApplication.sendPostedEvents(widget, QEvent.Type.DeferredDelete)
 
     def test_preview_edit_and_save_only_once(self):
         task = self.widget.task
@@ -77,8 +83,75 @@ class TaskEntryTests(unittest.TestCase):
             "title": "Revised invented task", "category": "work", "duty": "Existing role",
             "new_duty": None, "due_date": "2026-10-15",
         })
-        self.assertFalse(task.save_button.isEnabled())
+        self.assertEqual(task.title.text(), "")
+        self.assertTrue(task.form_group.isEnabled())
+        self.assertTrue(task.preview_group.isHidden())
+        self.assertIn("Saved task #1", task.status.text())
         self.assertFalse(task.has_unsaved_draft)
+
+    def test_two_tasks_can_be_saved_consecutively(self):
+        task = self.widget.task
+        for number, title in enumerate(("First invented task", "Second invented task"), 1):
+            task.title.setText(title)
+            task.show_preview()
+            task.save()
+            self.assertEqual(task.title.text(), "")
+            self.assertIn(f"Saved task #{number}", task.status.text())
+        self.assertEqual([draft["title"] for draft in self.service.saved_tasks],
+                         ["First invented task", "Second invented task"])
+
+    def test_save_failure_keeps_preview_and_draft_for_retry(self):
+        task = self.widget.task
+        task.title.setText("Invented task")
+        task.show_preview()
+        with patch.object(self.service, "save_task", side_effect=OSError("database unavailable")):
+            task.save()
+        self.assertEqual(task.title.text(), "Invented task")
+        self.assertFalse(task.preview_group.isHidden())
+        self.assertIsNotNone(task._preview_draft)
+        self.assertTrue(task.save_button.isEnabled())
+        self.assertIn("Your draft is still here", task.status.text())
+        self.assertEqual(self.service.saved_tasks, [])
+        task.save()
+        self.assertEqual(len(self.service.saved_tasks), 1)
+        self.assertEqual(task.title.text(), "")
+
+    def test_reference_reload_failure_after_save_cannot_repeat_write(self):
+        task = self.widget.task
+        task.title.setText("Invented task")
+        task.show_preview()
+        with patch.object(self.service, "references", side_effect=OSError("references unavailable")):
+            task.save()
+            task.save()
+            self.assertEqual(len(self.service.saved_tasks), 1)
+            self.assertTrue(task._committed)
+            self.assertFalse(task.new_button.isHidden())
+            self.assertIn("Saved task #1", task.status.text())
+            self.assertIn("could not start", task.status.text().lower())
+        self.assertTrue(task.reset_form())
+        self.assertEqual(task.title.text(), "")
+        self.assertFalse(task.has_unsaved_draft)
+
+    def test_successful_save_returns_to_top_and_focuses_title(self):
+        self.widget.resize(360, 160)
+        self.widget.show()
+        self.app.processEvents()
+        scroll = self.widget.findChild(QScrollArea)
+        bar = scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        self.assertGreater(bar.value(), 0)
+        task = self.widget.task
+        task.title.setText("Invented task")
+        task.show_preview()
+        task.save()
+        self.app.processEvents()
+        self.assertEqual(bar.value(), 0)
+        self.assertTrue(task.title.hasFocus())
+        self.assertEqual(task.title.text(), "")
+        self.assertIn("Saved task #1", task.status.text())
+        self.assertTrue(task.status.isVisible())
+        self.assertTrue(scroll.viewport().rect().contains(
+            task.status.mapTo(scroll.viewport(), task.status.rect().center())))
 
     def test_invalid_preview_keeps_draft(self):
         task = self.widget.task
@@ -158,7 +231,7 @@ class TaskEntryTests(unittest.TestCase):
                 self.assertTrue(task._preview_draft)
                 task.save()
                 self.assertIn("Saved task #", task.status.text())
-                task.reset_form()
+                self.assertEqual(task.title.text(), "")
                 task.category.setCurrentIndex(task.category.findData("work"))
                 self.assertGreaterEqual(task.role.findData("Invented role"), 0)
                 with closing(db.connect(database)) as con:
@@ -166,7 +239,7 @@ class TaskEntryTests(unittest.TestCase):
                     self.assertEqual(tuple(row), ("Invented open task", "open", "Invented role"))
                     self.assertEqual(con.execute("SELECT count(*) FROM duties WHERE name='Invented role'").fetchone()[0], 1)
             finally:
-                widget.close()
+                self._close_widget(widget)
 
 
 if __name__ == "__main__":
