@@ -117,7 +117,7 @@ class CaptureWidget(QWidget):
         self.form_group = QGroupBox("Completed work" if tracked_task is None else "Complete task")
         self.form_group.setLayout(form)
 
-        self.preview_button = QPushButton("Preview")
+        self.preview_button = QPushButton("Review completion" if tracked_task is not None else "Preview")
         self.preview_button.setProperty('primary', True)
         self.preview_button.clicked.connect(self.show_preview)
         self.cancel_button = QPushButton("Cancel" if tracked_task is not None else "Cancel draft")
