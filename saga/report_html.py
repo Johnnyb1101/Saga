@@ -144,6 +144,37 @@ def _preparation_html(evidence, preparation):
     return "".join(parts)
 
 
+def _recorded_results_html(evidence, narrative, preparation):
+    """Fill omitted numerical results from this snapshot, never from prose."""
+    referenced = {segment["fact"] for section in narrative["sections"]
+                  for paragraph in section["paragraphs"] for segment in paragraph if "fact" in segment}
+    selected = preparation is not None and preparation["report_format"] != "general"
+    rows = []
+    if selected:
+        for entry in preparation["selected_records"]:
+            measurement = entry["measurement"]
+            if measurement is None or measurement["fact_id"] in referenced:
+                continue
+            row = entry["source_record"]
+            title = row.get("task_title") or f'Saved accomplishment {row["id"]}'
+            rows.append(f'<li>{_html(title)}: {_fact_link(measurement["fact_id"], evidence, preparation)}</li>')
+    else:
+        count_id = next((key for key, fact in evidence["facts"].items()
+                         if fact.get("dimension") == "summary" and fact.get("group") == "completions"), None)
+        if count_id is not None and count_id not in referenced:
+            rows.append(f'<li>Accomplishments recorded: {_fact_link(count_id, evidence)}</li>')
+        for measurement in evidence["measurements"]:
+            if measurement["occasions"] > 0 and measurement["fact_id"] not in referenced:
+                rows.append(f'<li>{_html(measurement["measure"])}: {_fact_link(measurement["fact_id"], evidence)}</li>')
+    if not rows:
+        return ""
+    scope = "selected accomplishments" if selected else "full filtered range"
+    return (f'<h3>Recorded results — {scope}</h3>'
+            '<p class="small">Saga inserts these additional results directly from the saved report data. '
+            'Each measure keeps its own unit; results may describe the same work.</p><ul>'
+            + "".join(rows) + '</ul>')
+
+
 def render_html(evidence, narrative=None, preparation=None, *, draft_only=False):
     """Return escaped, self-contained HTML from verified evidence.
 
@@ -167,7 +198,8 @@ def render_html(evidence, narrative=None, preparation=None, *, draft_only=False)
     scope = evidence["scope"]
     summary = evidence["summary"]
     measurements = evidence["measurements"]
-    report_title = "Award draft" if preparation is not None and preparation["report_format"] == "award" else "Accomplishment report"
+    report_format = "general" if preparation is None else preparation["report_format"]
+    report_title = {"general": "General report", "epb": "EPB draft", "cv": "CV draft", "award": "Award draft"}[report_format]
     parts = ["<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
              '<meta name="viewport" content="width=device-width, initial-scale=1">',
              f"<title>{report_title} {_html(evidence['report_id'])}</title>",
@@ -193,6 +225,7 @@ def render_html(evidence, narrative=None, preparation=None, *, draft_only=False)
                 for segment in paragraph:
                     parts.append(_html(segment["text"]) if "text" in segment else _fact_link(segment["fact"], evidence, preparation))
                 parts.append("</p>")
+        parts.append(_recorded_results_html(evidence, narrative, preparation))
         parts.append("</section>")
         if draft_only:
             parts.append('<p class="small">Verified totals are available in the separate totals tab and saved report.</p>')

@@ -139,8 +139,10 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
     def response(self):
         evidence, _ = self.snapshot.unpack()
         fact = next(iter(evidence['facts']))
+        measurement = next(key for key, value in evidence['facts'].items() if value.get('measure') is not None)
         narrative = {'schema_version': 1, 'report_id': evidence['report_id'], 'sections': [
-            {'heading': 'Overview', 'paragraphs': [[{'text': 'Recorded accomplishments: '}, {'fact': fact}]]}]}
+            {'heading': 'Overview', 'paragraphs': [[{'text': 'Recorded accomplishments: '}, {'fact': fact},
+                                                   {'text': '. Recorded hours: '}, {'fact': measurement}]]}]}
         return json.dumps({'status': 'completed', 'output': [{'type': 'message', 'role': 'assistant',
                           'status': 'completed', 'content': [{'type': 'output_text',
                           'text': json.dumps(narrative)}]}]}).encode()
@@ -224,18 +226,20 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         from saga.ai_drafting import DraftError
         from saga.ai_errors import safe_failure_message
 
-        self.dialog.key_input.setText('fake-test-key')
-        self.dialog.send_button.click()
-        error = DraftError('literal_numbers')
-        error.args = ('DO-NOT-DISPLAY-PROVIDER-TEXT',)
-        with patch('saga.desktop.ai_draft.parse_response', side_effect=error):
-            self.transport.succeeded.emit(b'PRIVATE-RESPONSE')
-        expected = safe_failure_message('literal_numbers') + ' No report was saved.'
-        self.assertEqual(self.dialog.status.text(), expected)
-        self.assertEqual(self.dialog.review.toPlainText(), expected)
-        self.assertNotIn('DO-NOT-DISPLAY', expected)
-        self.assertFalse(self.dialog.save_button.isEnabled())
-        self.assertIsNone(self.dialog._draft)
+        for reason in ('literal_numbers', 'missing_fact', 'unresolved_placeholder', 'unverified_number'):
+            with self.subTest(reason=reason):
+                self.dialog.key_input.setText('fake-test-key')
+                self.dialog.send_button.click()
+                error = DraftError(reason)
+                error.args = ('DO-NOT-DISPLAY-PROVIDER-TEXT',)
+                with patch('saga.desktop.ai_draft.parse_response', side_effect=error):
+                    self.transport.succeeded.emit(b'PRIVATE-RESPONSE')
+                expected = safe_failure_message(reason) + ' No report was saved.'
+                self.assertEqual(self.dialog.status.text(), expected)
+                self.assertEqual(self.dialog.review.toPlainText(), expected)
+                self.assertNotIn('DO-NOT-DISPLAY', expected)
+                self.assertFalse(self.dialog.save_button.isEnabled())
+                self.assertIsNone(self.dialog._draft)
 
     def test_safe_error_reasons_are_distinct_and_keep_key_out_of_status(self):
         from saga.ai_errors import ERROR_MESSAGES
@@ -272,6 +276,9 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         self.assertNotIn('Measured results', self.dialog.review.toPlainText())
         self.assertIn('Measured results', self.dialog.verified_totals.toPlainText())
         self.assertEqual(self.dialog.tabs.tabText(2), 'Verified totals')
+        self.assertEqual(self.dialog.format_label.text(), 'Report format: General report')
+        self.assertIn('General report', self.dialog.windowTitle())
+        self.assertIn('2.5', self.dialog.review.toPlainText())
 
     def test_model_change_invalidates_review_and_draft(self):
         self.dialog.key_input.setText('fake-test-key')
@@ -281,6 +288,22 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         self.assertIsNone(self.dialog._draft)
         self.assertFalse(self.dialog.save_button.isEnabled())
         self.assertIn('different-model', self.dialog.preview.toPlainText())
+
+    def test_matching_written_quantities_are_corrected_locally_without_another_request(self):
+        evidence, _ = self.snapshot.unpack()
+        draft = {'schema_version': 1, 'report_id': evidence['report_id'], 'sections': [
+            {'heading': 'Recorded results', 'paragraphs': [[
+                {'text': 'Recorded one accomplishment and two point five hours.'}]]}]}
+        raw = json.dumps({'status': 'completed', 'output': [{'type': 'message', 'role': 'assistant',
+            'status': 'completed', 'content': [{'type': 'output_text', 'text': json.dumps(draft)}]}]}).encode()
+        self.dialog.key_input.setText('fake-test-key')
+        self.dialog.send_button.click()
+        self.transport.succeeded.emit(raw)
+        self.assertEqual(len(self.transport.calls), 1)
+        self.assertTrue(self.dialog.save_button.isEnabled())
+        self.assertIn('1 accomplishment and 2.5 hours.', self.dialog.review.toPlainText())
+        self.assertNotIn('two point five', self.dialog.review.toPlainText())
+        self.assertFalse(list(self.root.glob('Saga-AI-report-*')))
 
     def test_history_ai_entry_uses_selected_scope_and_no_automatic_send(self):
         from PySide6.QtCore import QDate

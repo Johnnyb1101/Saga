@@ -149,6 +149,64 @@ class ReportHtmlTests(unittest.TestCase):
         self.assertIn("<h1>Award draft</h1>", draft_html)
         self.assertNotIn("Selected record 11", draft_html)
 
+    def test_omitted_results_are_inserted_from_snapshot_without_repeating_inline_facts(self):
+        data = evidence()
+        data["facts"]["f-hours"] = {"display": "40", "measure": "volunteer hours"}
+        data["facts"]["f-count"] = {"display": "2", "dimension": "summary", "group": "completions"}
+        data["measurements"].append({"measure": "volunteer hours", "total": 40,
+                                     "occasions": 1, "fact_id": "f-hours"})
+        html = render_html(data, narrative(), draft_only=True)
+        self.assertIn("Recorded results — full filtered range", html)
+        self.assertIn('volunteer hours: <a href="evidence.json" title="Fact ID: f-hours">40</a>', html)
+        self.assertIn('Accomplishments recorded: <a href="evidence.json" title="Fact ID: f-count">2</a>', html)
+        self.assertEqual(html.count('title="Fact ID: f-total"'), 1)
+        self.assertNotIn("<table>", html)
+        html = render_html(evidence(), narrative(), draft_only=True)
+        self.assertNotIn("Recorded results —", html)
+
+    def test_inserted_results_preserve_observed_zero_and_omit_unobserved_totals(self):
+        data = evidence()
+        data["facts"]["f-zero"] = {"display": "0"}
+        data["facts"]["f-unused"] = {"display": "0"}
+        data["measurements"].extend([
+            {"measure": "recorded zero", "total": 0, "occasions": 1, "fact_id": "f-zero"},
+            {"measure": "unobserved measure", "total": 0, "occasions": 0, "fact_id": "f-unused"},
+        ])
+        html = render_html(data, narrative(), draft_only=True)
+        self.assertIn('recorded zero: <a href="evidence.json" title="Fact ID: f-zero">0</a>', html)
+        self.assertNotIn("unobserved measure", html)
+
+    def test_selected_inserted_results_never_use_full_range_or_unselected_measurements(self):
+        data = evidence()
+        data["records"].append({"id": 12, "outcome": "Selected second result", "category": "work",
+                                "measure": "hours", "quantity": 3})
+        data["records"].append({"id": 13, "outcome": "PRIVATE UNSELECTED", "category": "work",
+                                "measure": "private measure", "quantity": 99})
+        preparation = build_preparation(data, "award", [11, 12])
+        draft = narrative()
+        draft["preparation_id"] = preparation["preparation_id"]
+        draft["sections"][0]["paragraphs"][0][1] = {"fact": "record-11-quantity"}
+        html = render_html(data, draft, preparation, draft_only=True)
+        self.assertIn("Recorded results — selected accomplishments", html)
+        self.assertIn('title="Fact ID: record-12-quantity">3 hours</a>', html)
+        self.assertEqual(html.count('title="Fact ID: record-11-quantity"'), 1)
+        for omitted in ("full filtered range", "PRIVATE UNSELECTED", "private measure", "99", "Fact ID: f-total"):
+            self.assertNotIn(omitted, html)
+
+    def test_every_report_format_has_a_clear_title_and_legacy_prose_still_renders(self):
+        for report_format, title in (("general", "General report"), ("epb", "EPB draft"),
+                                     ("cv", "CV draft"), ("award", "Award draft")):
+            with self.subTest(report_format=report_format):
+                data = evidence()
+                preparation = build_preparation(data, report_format, None if report_format == "general" else [11])
+                draft = narrative()
+                if report_format != "general":
+                    draft["preparation_id"] = preparation["preparation_id"]
+                draft["sections"][0]["paragraphs"] = [[{"text": "An older saved narrative."}]]
+                html = render_html(data, draft, preparation, draft_only=True)
+                self.assertIn(f"<h1>{title}</h1>", html)
+                self.assertIn("An older saved narrative.", html)
+
     def test_narrative_text_is_escaped(self):
         case = narrative()
         case["sections"][0]["paragraphs"][0][0]["text"] = '<img src=x onerror="alert()">'

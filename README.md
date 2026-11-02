@@ -984,13 +984,25 @@ local paths and unrelated source-record fields are not uploaded. Source wording
 may contain private information, so review it before approving each send.
 
 Saga requests wording with fact references, then inserts the verified numbers.
-Unknown references, literal digits in prose, mismatched snapshots/selections and
-invalid responses are rejected. Wording, inferred meaning and spelled-out claims
-still need human review. The report uses the snapshot captured when its dialog
+New AI drafts must reference a verified measurement when measurements are available;
+General drafts without measurements must reference a verified summary fact.
+Unmeasured selected accomplishments can still produce text-only drafts. Unknown
+references, unresolved placeholders, literal digits, mismatched snapshots/selections
+and invalid responses are rejected. Saga can replace a written-out quantity with
+an existing number reference only when it exactly matches one verified figure for
+the same unit and scope. Conflicting, ambiguous or unsupported quantity phrases
+remain rejected. This correction runs locally, preserves the recorded totals,
+and makes no additional API request.
+Wording and inferred meaning still need human review; these checks do not prove
+every claim. The report uses the snapshot captured when its dialog
 opened, even if the archive changes afterward; reopen to use newer data.
 Choose **Save reviewed report** only after reviewing the draft. The fixed report
 and full local evidence are included in the new report folder. Review draft
-shows the concise text; Verified totals is a separate tab. Saved HTML places the
+shows the concise text and any additional recorded results inserted directly by
+Saga. General uses the completion count and observed totals for the filtered range;
+EPB, CV and Award use only the selected measurements in this short list. Figures
+already referenced in the narrative are not repeated there. The selected format
+is named in the dialog and report heading. Verified totals is a separate tab. Saved HTML places the
 draft first and verified tables/source preparation under expandable supporting
 details. Rows with no observations are omitted, while observed zero values stay
 visible. General AI input removes measured facts that repeat the same exact

@@ -69,6 +69,11 @@ class AIDraftDialog(QDialog):
         self._busy = False
         self._closed = False
         layout = QVBoxLayout(self)
+        _, preparation = self._snapshot.unpack()
+        format_label = {"general": "General report", "epb": "EPB draft", "cv": "CV draft", "award": "Award draft"}[preparation["report_format"]]
+        self.setWindowTitle(f'Draft with OpenAI — {format_label}')
+        self.format_label = _label(f'Report format: {format_label}')
+        layout.addWidget(self.format_label)
         layout.addWidget(_label('OpenAI drafts wording. Saga supplies the numbers. This snapshot stays fixed; reopen this window to include later changes. Review what will be sent, then choose Send and draft. API usage may incur charges.'))
         self.key_input = QLineEdit()
         self.key_input.setEchoMode(QLineEdit.EchoMode.Password)

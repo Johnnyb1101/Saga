@@ -13,6 +13,7 @@ class AIErrorTests(unittest.TestCase):
             "timeout", "too_large", "unknown",
             "draft_incomplete", "refused", "response_shape", "invalid_json",
             "report_mismatch", "selection_mismatch", "literal_numbers", "unknown_fact",
+            "missing_fact", "unresolved_placeholder", "unverified_number",
             "draft_structure", "draft_size", "invalid_evidence", "invalid_preparation", "invalid_model",
         })
         self.assertEqual(len(set(ERROR_MESSAGES.values())), len(ERROR_MESSAGES))

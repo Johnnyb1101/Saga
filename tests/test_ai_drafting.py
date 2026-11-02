@@ -14,6 +14,7 @@ from saga.ai_drafting import (
     build_request,
     parse_response,
 )
+from saga.ai_errors import safe_failure_message
 from saga.preparation import build_preparation
 
 
@@ -79,6 +80,7 @@ class DraftProtocolTests(unittest.TestCase):
         self.assertEqual(schema["properties"]["report_id"]["enum"], ["report-abc"])
         sections = schema["properties"]["sections"]
         self.assertEqual(sections["maxItems"], 20)
+        self.assertEqual(sections["minItems"], 1)
         section = sections["items"]["properties"]
         self.assertEqual(section["heading"]["pattern"], "^[^0-9]*$")
         self.assertEqual(section["heading"]["maxLength"], 200)
@@ -212,6 +214,165 @@ class DraftProtocolTests(unittest.TestCase):
         selected = narrative(prep)
         selected["sections"][0]["paragraphs"][0][1] = {"fact": "record-11-quantity"}
         self.assertEqual(parse_response(response(selected), data, prep), selected)
+
+    def test_general_requires_a_fact_even_without_measurements(self):
+        data = evidence()
+        draft = narrative()
+        draft["sections"][0]["paragraphs"] = [[{"text": "Work was recorded."}]]
+        with self.assertRaises(DraftError) as caught:
+            parse_response(response(draft), data)
+        self.assertEqual(caught.exception.reason, "missing_fact")
+
+    def test_empty_sections_fail_local_parse_even_when_selection_is_unmeasured(self):
+        data = evidence()
+        data["records"][0]["measure"] = None
+        data["records"][0]["quantity"] = None
+        prep = build_preparation(data, "epb", [11])
+        draft = narrative(prep)
+        draft["sections"] = []
+        with self.assertRaises(DraftError) as caught:
+            parse_response(response(draft), data, prep)
+        self.assertEqual(caught.exception.reason, "draft_structure")
+
+    def test_measured_drafts_require_a_measured_reference(self):
+        data = evidence()
+        data["facts"]["hours-total"] = {
+            "label": "hours total", "display": "0", "value": 0, "measure": "hours",
+            "dimension": "total", "group": "hours", "source_record_ids": [11],
+        }
+        draft = narrative()  # Its summary reference does not cover measured hours.
+        with self.assertRaises(DraftError) as caught:
+            parse_response(response(draft), data)
+        self.assertEqual(caught.exception.reason, "missing_fact")
+        draft["sections"][0]["paragraphs"][0].extend([
+            {"text": " and "}, {"fact": "hours-total"}, {"text": " hours."},
+        ])
+        self.assertEqual(parse_response(response(draft), data), draft)
+
+        selected_data = evidence()
+        prep = build_preparation(selected_data, "epb", [11])
+        selected = narrative(prep)
+        selected["sections"][0]["paragraphs"] = [[{"text": "Built widgets."}]]
+        with self.assertRaises(DraftError) as caught:
+            parse_response(response(selected), selected_data, prep)
+        self.assertEqual(caught.exception.reason, "missing_fact")
+
+    def test_unmeasured_selected_draft_can_use_only_text(self):
+        data = evidence()
+        data["records"][0]["measure"] = None
+        data["records"][0]["quantity"] = None
+        prep = build_preparation(data, "epb", [11])
+        draft = narrative(prep)
+        draft["sections"][0]["paragraphs"] = [[{"text": "Built widgets."}]]
+        self.assertEqual(parse_response(response(draft), data, prep), draft)
+
+    def test_placeholders_are_rejected_in_headings_and_adjacent_text(self):
+        data = evidence()
+        data["facts"]["hours-total"] = {
+            "label": "hours total", "display": "2", "value": 2, "measure": "hours",
+            "dimension": "total", "group": "hours", "source_record_ids": [11],
+        }
+        data["facts"]["people-total"] = {
+            "label": "people assisted total", "display": "3", "value": 3,
+            "measure": "people assisted", "dimension": "total",
+            "group": "people assisted", "source_record_ids": [12],
+        }
+        data["facts"]["volunteer-total"] = {
+            "label": "volunteer hours total", "display": "4", "value": 4,
+            "measure": "volunteer hours", "dimension": "total",
+            "group": "volunteer hours", "source_record_ids": [13],
+        }
+        for part in ("{{hours-total}}", "[insert hours here]", "\ufffc", "\ufe0f",
+                     "hours total", "hours-total"):
+            with self.subTest(part=part):
+                draft = narrative()
+                draft["sections"][0]["heading"] = part
+                draft["sections"][0]["paragraphs"][0].extend([
+                    {"text": " Recorded "}, {"fact": "hours-total"}, {"text": " hours."},
+                ])
+                with self.assertRaises(DraftError) as caught:
+                    parse_response(response(draft), data)
+                self.assertEqual(caught.exception.reason, "unresolved_placeholder")
+        for text_parts in (("{{hours", "-total}}"), ("[insert ", "hours]"),
+                           ("hours ", "total"), ("hours-", "total"),
+                           ("Provided assistance to people assisted ", "total."),
+                           ("Volunteer contributions amounted to volunteer hours ",
+                            "total hours.")):
+            with self.subTest(text_parts=text_parts):
+                draft = narrative()
+                draft["sections"][0]["paragraphs"].insert(0, [
+                    {"text": text_parts[0]}, {"text": text_parts[1]},
+                ])
+                draft["sections"][0]["paragraphs"][1].extend([
+                    {"text": " Recorded "}, {"fact": "hours-total"}, {"text": " hours."},
+                ])
+                with self.assertRaises(DraftError) as caught:
+                    parse_response(response(draft), data)
+                self.assertEqual(caught.exception.reason, "unresolved_placeholder")
+        draft = narrative()
+        draft["sections"][0]["paragraphs"][0][0] = {"text": "Hours total remained useful. "}
+        draft["sections"][0]["paragraphs"][0].extend([
+            {"text": " Recorded "}, {"fact": "hours-total"}, {"text": " hours."},
+        ])
+        self.assertEqual(parse_response(response(draft), data), draft)
+
+    def test_spelled_quantities_are_rejected_only_when_tied_to_counts(self):
+        data = evidence()
+        data["facts"]["hours-total"] = {
+            "label": "hours total", "display": "2", "value": 2, "measure": "hours",
+            "dimension": "total", "group": "hours", "source_record_ids": [11],
+        }
+        for phrase in ("four hours", "a total of four accomplishments"):
+            with self.subTest(phrase=phrase):
+                draft = narrative()
+                draft["sections"][0]["paragraphs"][0][0] = {"text": phrase + " "}
+                draft["sections"][0]["paragraphs"][0].append({"fact": "hours-total"})
+                with self.assertRaises(DraftError) as caught:
+                    parse_response(response(draft), data)
+                self.assertEqual(caught.exception.reason, "unverified_number")
+        draft = narrative()
+        draft["sections"][0]["paragraphs"][0] = [
+            {"text": "One completion and "}, {"fact": "hours-total"}, {"text": " hours."},
+        ]
+        fixed = parse_response(response(draft), data)
+        self.assertEqual(fixed["sections"][0]["paragraphs"][0], [
+            {"fact": "fact-total"}, {"text": " completion and "},
+            {"fact": "hours-total"}, {"text": " hours."},
+        ])
+        draft = narrative()
+        draft["sections"][0]["paragraphs"][0][0] = {
+            "text": "Completed first aid training and one-on-one coaching. "}
+        draft["sections"][0]["paragraphs"][0].append({"fact": "hours-total"})
+        self.assertEqual(parse_response(response(draft), data), draft)
+        draft["sections"][0]["paragraphs"][0][0] = {
+            "text": "First review of accomplishments is pending. "}
+        self.assertEqual(parse_response(response(draft), data), draft)
+        draft["sections"][0]["paragraphs"][0][0] = {
+            "text": "One review of accomplishments is pending. "}
+        self.assertEqual(parse_response(response(draft), data), draft)
+
+    def test_new_rejections_use_fixed_safe_messages(self):
+        for reason in ("missing_fact", "unresolved_placeholder", "unverified_number"):
+            with self.subTest(reason=reason):
+                self.assertNotIn("provider", safe_failure_message(reason).lower())
+                self.assertNotEqual(safe_failure_message(reason), safe_failure_message("unknown"))
+
+    def test_matching_written_measurement_is_replaced_by_existing_fact_without_changing_evidence(self):
+        data = evidence()
+        data["facts"]["hours-total"] = {
+            "label": "hours total", "display": "2.5", "value": 2.5, "measure": "hours",
+            "dimension": "total", "group": "hours", "source_record_ids": [11],
+        }
+        data["measurements"] = [{"measure": "hours", "total": 2.5, "occasions": 1, "fact_id": "hours-total"}]
+        draft = narrative()
+        draft["sections"][0]["paragraphs"] = [[{"text": "Recorded two point five hours."}]]
+        original_data, original_draft = copy.deepcopy(data), copy.deepcopy(draft)
+        fixed = parse_response(response(draft), data)
+        self.assertEqual(fixed["sections"][0]["paragraphs"], [[
+            {"text": "Recorded "}, {"fact": "hours-total"}, {"text": " hours."},
+        ]])
+        self.assertEqual(data, original_data)
+        self.assertEqual(draft, original_draft)
 
     def test_selected_response_cannot_use_unsent_aggregate_fact(self):
         data = evidence()

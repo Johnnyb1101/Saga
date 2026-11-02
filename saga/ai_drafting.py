@@ -8,6 +8,7 @@ import json
 import re
 from typing import ClassVar
 
+from saga.draft_quantities import repair_quantities
 from saga.preparation import preparation_guide, validate_preparation
 from saga.report_html import validate_narrative
 
@@ -37,6 +38,9 @@ class DraftError(ValueError):
         "selection_mismatch": "Draft does not match the selected records.",
         "literal_numbers": "Draft prose contains literal numbers.",
         "unknown_fact": "Draft references an unavailable fact.",
+        "missing_fact": "Draft omits a required verified fact reference.",
+        "unresolved_placeholder": "Draft contains an unresolved fact placeholder.",
+        "unverified_number": "Draft prose contains an unverified quantity claim.",
         "draft_structure": "Draft content failed report validation.",
     }
 
@@ -139,7 +143,7 @@ def _schema(projection):
     properties = {
         "schema_version": {"type": "integer", "enum": [1]},
         "report_id": {"type": "string", "enum": [projection["report_id"]]},
-        "sections": {"type": "array", "maxItems": 20, "items": {
+        "sections": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
             "type": "object", "properties": {
                 "heading": {"type": "string", "minLength": 1, "maxLength": 200,
                             "pattern": "^[^0-9]*$"},
@@ -207,7 +211,16 @@ def build_request(evidence, preparation=None, model=DEFAULT_MODEL):
         "Do not invent numbers, spelled-out metrics, dates, employers, impacts, "
         "or other claims. Do not infer an impact from an action or outcome. "
         "Place every numeric claim in a fact segment containing an exact supplied "
-        "fact ID; never put literal digits in headings or text segments. "
+        "fact ID; never put literal digits or spelled-out quantities in headings "
+        "or text segments. Alternate text and fact segments, for example "
+        "[{\"text\":\"Recorded \"},{\"fact\":\"the supplied fact ID\"},"
+        "{\"text\":\" widgets.\"}]. For General reports, a measurement fact "
+        "renders only its number, so put its exact unit in connecting text. "
+        "For selected-record reports, a measurement fact already renders its "
+        "number and exact unit; do not repeat the unit. Never write a raw fact "
+        "ID or label in place of a fact segment. Include at least one measured "
+        "fact reference when measurements are supplied; otherwise include at "
+        "least one supplied fact reference for General reports. "
         "Mention each measurement once, using the most useful grouping. Category, "
         "role and month totals may overlap; never add them or describe them as "
         "separate achievements when they refer to the same work. Omit groups with "
@@ -287,6 +300,95 @@ def _narrative_reason(exc, narrative):
     return "draft_structure"
 
 
+_SPELLED_QUANTITY = re.compile(
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+    r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|"
+    r"thousand|million)\b",
+    re.IGNORECASE,
+)
+_INSERT_PLACEHOLDER = re.compile(r"\{\{[^{}]*\}\}|\[\s*insert\b[^\]]*\]", re.IGNORECASE)
+_ONE_ON_ONE = re.compile(r"\bone-on-one\b", re.IGNORECASE)
+
+
+def _measurement_terms(projection):
+    terms = {"accomplishment", "accomplishments", "completion", "completions"}
+    if projection["report_format"] == "general":
+        terms.update(fact["measure"] for fact in projection["facts"].values()
+                     if fact["measure"])
+    else:
+        for entry in projection["selected_records"]:
+            measurement = entry["measurement_fact"]
+            if measurement is not None:
+                unit = re.sub(r"^\s*[\d.,+-]+\s*", "", measurement["display"]).strip()
+                if unit:
+                    terms.add(unit)
+    return terms
+
+
+def _check_draft_content(narrative, projection, allowed_facts):
+    if not narrative["sections"]:
+        raise DraftError("draft_structure")
+    measured_facts = (
+        {fact_id for fact_id, fact in projection["facts"].items()
+         if fact["measure"] is not None}
+        if projection["report_format"] == "general" else
+        {entry["measurement_fact"]["fact_id"]
+         for entry in projection["selected_records"]
+         if entry["measurement_fact"] is not None}
+    )
+    referenced = set()
+    placeholder_patterns = []
+    for fact in projection.get("facts", {}).values():
+        label = fact["label"]
+        if re.search(r"\btotal\s*$", label, re.IGNORECASE):
+            words = label.split()
+            repeated_unit = re.escape(words[-2]) if len(words) > 1 else ""
+            placeholder_patterns.append(re.compile(
+                r"(?<![\w-])" + re.escape(label) +
+                (rf"(?:\s+{repeated_unit})?" if repeated_unit else "") +
+                r"(?=\s*(?:[.!?,;:]|$))", re.IGNORECASE))
+    fact_id_patterns = [re.compile(r"(?<![\w-])" + re.escape(fact_id) + r"(?![\w-])")
+                        for fact_id in allowed_facts]
+    term_pattern = re.compile(
+        r"\b(?:" + "|".join(re.escape(term) for term in
+                             sorted(_measurement_terms(projection), key=len, reverse=True))
+        + r")\b", re.IGNORECASE)
+    claim_suffix = re.compile(
+        r"(?:\s+(?:recorded|completed|assisted|volunteer|service|worked|"
+        r"documented)){0,2}\s+" + term_pattern.pattern, re.IGNORECASE)
+
+    def check_text(value):
+        if ("\ufffc" in value or "\ufe0f" in value or _INSERT_PLACEHOLDER.search(value)
+                or any(pattern.search(value) for pattern in fact_id_patterns)
+                or any(pattern.search(value) for pattern in placeholder_patterns)):
+            raise DraftError("unresolved_placeholder")
+        for quantity in _SPELLED_QUANTITY.finditer(value):
+            # A personal coaching phrase is not a measured count.
+            if any(match.start() <= quantity.start() < match.end()
+                   for match in _ONE_ON_ONE.finditer(value)):
+                continue
+            if claim_suffix.match(value, quantity.end()):
+                raise DraftError("unverified_number")
+
+    for section in narrative["sections"]:
+        check_text(section["heading"])
+        for paragraph in section["paragraphs"]:
+            text_run = ""
+            for segment in paragraph:
+                if "fact" in segment:
+                    check_text(text_run)
+                    text_run = ""
+                    referenced.add(segment["fact"])
+                else:
+                    text_run += segment["text"]
+            check_text(text_run)
+    if measured_facts and not referenced.intersection(measured_facts):
+        raise DraftError("missing_fact")
+    if projection["report_format"] == "general" and not referenced:
+        raise DraftError("missing_fact")
+
+
 def parse_response(rawbytes, evidence, preparation=None):
     """Extract one completed output_text message and validate its narrative."""
     if not isinstance(rawbytes, bytes):
@@ -348,6 +450,17 @@ def parse_response(rawbytes, evidence, preparation=None):
                 for segment in paragraph:
                     if "fact" in segment and segment["fact"] not in allowed_facts:
                         raise DraftError("unknown_fact")
+        try:
+            narrative = repair_quantities(narrative, evidence, preparation, allowed_facts)
+        except ValueError as exc:
+            raise DraftError("unverified_number") from exc
+        validate_narrative(narrative, evidence, preparation)
+        for section in narrative["sections"]:
+            for paragraph in section["paragraphs"]:
+                for segment in paragraph:
+                    if "fact" in segment and segment["fact"] not in allowed_facts:
+                        raise DraftError("unknown_fact")
+        _check_draft_content(narrative, projection, allowed_facts)
         return narrative
     except DraftError:
         raise
