@@ -134,7 +134,7 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         self.dialog.reject()
         self.dialog.deleteLater()
         self.transport.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QCoreApplication.sendPostedEvents(self.dialog, QEvent.Type.DeferredDelete)
 
     def response(self):
         evidence, _ = self.snapshot.unpack()
@@ -263,6 +263,15 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         verify_package(output)
         for path in output.iterdir():
             self.assertNotIn(b'fake-export-exclusion-key', path.read_bytes())
+
+    def test_review_draft_is_separate_from_verified_tables(self):
+        self.dialog.key_input.setText('fake-test-key')
+        self.dialog.send_button.click()
+        self.transport.succeeded.emit(self.response())
+        self.assertIn('Recorded accomplishments:', self.dialog.review.toPlainText())
+        self.assertNotIn('Measured results', self.dialog.review.toPlainText())
+        self.assertIn('Measured results', self.dialog.verified_totals.toPlainText())
+        self.assertEqual(self.dialog.tabs.tabText(2), 'Verified totals')
 
     def test_model_change_invalidates_review_and_draft(self):
         self.dialog.key_input.setText('fake-test-key')

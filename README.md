@@ -971,13 +971,13 @@ remember to select your real archive again afterward.
 ### Optional OpenAI drafting
 
 In **History & Reports**, choose your dates, filters and **Prepare for** format,
-then select **Draft with AI**. EPB/CV first ask which accomplishments to include.
+then select **Draft with AI**. EPB/CV/Award first ask which accomplishments to include.
 Opening the dialog makes no OpenAI request. Review **Data to send**, enter your
 own API key, and choose **Send and draft**. The model starts as `gpt-4.1-mini`;
 you can change it before sending if your account supports another model with
 Structured Outputs. API usage may incur charges.
 
-General drafts send aggregate facts; EPB/CV send only selected saved titles,
+General drafts send aggregate facts; EPB/CV/Award send only selected saved titles,
 outcomes, categories, roles and measured fact references. The exact request body
 is visible before sending, excluding its authentication header. The archive,
 local paths and unrelated source-record fields are not uploaded. Source wording
@@ -989,7 +989,12 @@ invalid responses are rejected. Wording, inferred meaning and spelled-out claims
 still need human review. The report uses the snapshot captured when its dialog
 opened, even if the archive changes afterward; reopen to use newer data.
 Choose **Save reviewed report** only after reviewing the draft. The fixed report
-and full local evidence are included in the new report folder.
+and full local evidence are included in the new report folder. Review draft
+shows the concise text; Verified totals is a separate tab. Saved HTML places the
+draft first and verified tables/source preparation under expandable supporting
+details. Rows with no observations are omitted, while observed zero values stay
+visible. General AI input removes measured facts that repeat the same exact
+unit and source records; the complete evidence file remains unchanged.
 
 Keys entered for use are kept in memory for the running Saga session only.
 **Remember key on this PC** is optional and starts off. Check it and choose
@@ -1040,10 +1045,12 @@ even if you have not pressed Show report. Both end dates are included.
 
 All final counts and totals are calculated and checked by Saga code, without AI.
 
-**Prepare for** offers **General report**, **EPB**, and **CV**. General report
-keeps the compact totals. EPB and CV first ask you to choose accomplishments:
+**Prepare for** offers **General report**, **EPB**, **CV**, and **Award draft**. General report
+keeps the compact totals. EPB, CV and Award draft first ask you to choose accomplishments:
 EPB prepares saved action/result material with missing impact marked explicitly;
-CV groups selected accomplishment bullets by saved role/category. These are
+CV groups selected accomplishment bullets by saved role/category. Award draft
+produces one concise nomination paragraph from selected actions and recorded
+results; it does not invent unsupported impact or claim official form compliance. These are
 preparation drafts, not an official EPB form or a complete employment history.
 There are no assumed official section or character limits.
 
@@ -1053,7 +1060,7 @@ any numbers it happens to mention. Only separately recorded quantities and
 Saga-calculated totals are verified numerical facts. No missing impact,
 qualification, employment dates, or measurements are invented.
 
-EPB/CV packages include `preparation.json` with selected source records and
+EPB/CV/Award packages include `preparation.json` with selected source records and
 Saga-generated per-record measurement facts. Format-specific agent instructions
 are included, but no AI service is connected. You can use the preparation draft
 without AI. Optional agent wording stays a draft and must reference Saga facts
@@ -1065,7 +1072,8 @@ CLI example (repeat `--record-id` for each selected accomplishment):
 .\.venv\Scripts\python.exe report_bundle.py --db data/stress-demo.db --out data/epb-draft --format epb --record-id 42 --record-id 43
 ```
 
-Use `--format cv` for a CV preparation draft; General report is the default.
+Use `--format cv` for a CV preparation draft or `--format award` for an award
+nomination draft; General report is the default.
 Selected records must belong to the chosen date range and filters. If a saved
 correction changes a record while you are choosing, a stale selection is refused;
 select again from the current records.

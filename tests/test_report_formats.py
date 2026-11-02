@@ -37,7 +37,7 @@ class FormatPackageTests(unittest.TestCase):
 
     def test_formats_have_selected_sources_and_full_range_totals(self):
         before = self.database.read_bytes()
-        for report_format in ('epb', 'cv'):
+        for report_format in ('epb', 'cv', 'award'):
             with self.subTest(report_format=report_format):
                 output = publish(self.database, self.root / report_format, since='2024-02-01', until='2024-02-29',
                                  report_format=report_format, selected_ids=[self.first])
@@ -122,7 +122,7 @@ class FormatPickerTests(unittest.TestCase):
         self.addCleanup(widget.close)
         widget.from_date.setDate(QDate(2024, 2, 1))
         widget.to_date.setDate(QDate(2024, 2, 29))
-        for report_format in ('epb', 'cv'):
+        for report_format in ('epb', 'cv', 'award'):
             widget.report_format.setCurrentIndex(widget.report_format.findData(report_format))
             with (patch('saga.desktop.history.AccomplishmentSelectionDialog') as picker,
                   patch('saga.desktop.history.QFileDialog.getExistingDirectory', return_value='C:/reports'),

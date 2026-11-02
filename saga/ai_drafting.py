@@ -65,12 +65,32 @@ def _projection(evidence, preparation):
               "report_format": report_format}
     if report_format == "general":
         # Facts are aggregate values only. Source records and provenance stay local.
-        result["facts"] = {
-            fact_id: {key: fact[key] for key in
-                      ("label", "display", "measure", "dimension", "group")}
-            for fact_id, fact in evidence["facts"].items()
-            if fact.get("dimension") != "selected_record"
-        }
+        result["facts"] = {}
+        seen_measurements = set()
+        dimension_order = {"summary": 0, "total": 1, "category": 2, "role": 3, "month": 4}
+        ordered_facts = sorted(evidence["facts"].items(),
+                               key=lambda item: dimension_order.get(item[1].get("dimension"), 5))
+        for fact_id, fact in ordered_facts:
+            if fact.get("dimension") == "selected_record":
+                continue
+            if fact.get("measure") is not None:
+                members = tuple(sorted(fact.get("source_record_ids", [])))
+                if not members:
+                    continue
+                identity = (fact["measure"], members)
+                if identity in seen_measurements:
+                    continue
+                seen_measurements.add(identity)
+            projected = {key: fact[key] for key in
+                         ("label", "display", "measure", "dimension", "group")}
+            if fact.get("dimension") == "summary":
+                projected["label"] = {
+                    "completions": "Accomplishments recorded",
+                    "review_counting": "Accomplishments eligible to count toward reviews",
+                    "flagged": "Accomplishments flagged for review",
+                    "with_a_number": "Accomplishments with a recorded measurement",
+                }.get(fact.get("group"), fact["label"])
+            result["facts"][fact_id] = projected
     else:
         result["preparation_id"] = preparation["preparation_id"]
         result["selected_records"] = []
@@ -188,6 +208,12 @@ def build_request(evidence, preparation=None, model=DEFAULT_MODEL):
         "or other claims. Do not infer an impact from an action or outcome. "
         "Place every numeric claim in a fact segment containing an exact supplied "
         "fact ID; never put literal digits in headings or text segments. "
+        "Mention each measurement once, using the most useful grouping. Category, "
+        "role and month totals may overlap; never add them or describe them as "
+        "separate achievements when they refer to the same work. Omit groups with "
+        "no observations and avoid describing missing data as proof of no activity. "
+        "Review-counting means accomplishments eligible to count toward reviews, "
+        "not reviews held or completed. Avoid repeating the fixed tables in prose. "
         "Keep saved wording clearly attributable and identify missing impact "
         "where relevant. Return only the required narrative JSON with "
         "schema_version 1 and the exact report_id"

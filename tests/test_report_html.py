@@ -2,6 +2,7 @@
 
 import unittest
 
+from saga.preparation import build_preparation
 from saga.report_html import render_html, validate_narrative
 
 
@@ -69,6 +70,84 @@ class ReportHtmlTests(unittest.TestCase):
         self.assertIn("Agent narrative — draft for review", html)
         self.assertIn('href="evidence.json" title="Fact ID: f-total"', html)
         self.assertIn("The wording and interpretation still need human review", html)
+        self.assertLess(html.index("<h2>Scope</h2>"), html.index("Agent narrative — draft for review"))
+        self.assertLess(html.index("Agent narrative — draft for review"),
+                        html.index("<summary>Verified totals and supporting details</summary>"))
+        self.assertLess(html.index("<summary>Verified totals and supporting details</summary>"),
+                        html.index("<h2>Summary</h2>"))
+
+    def test_fixed_report_stays_visible_without_narrative(self):
+        html = render_html(evidence())
+        self.assertNotIn("<summary>Verified totals and supporting details</summary>", html)
+        self.assertIn("<h2>Summary</h2>", html)
+        self.assertIn("across 1 occasion.", html)
+        for label in ("Accomplishments", "Count toward reviews", "Flagged for review",
+                      "With a recorded number"):
+            self.assertIn(f"<span>{label}</span>", html)
+
+    def test_unobserved_group_rows_are_hidden_but_recorded_zero_is_shown(self):
+        data = evidence()
+        data["facts"]["f-zero"] = {"display": "0 <widgets>"}
+        data["measurements"][0]["by_category"].extend([
+            {"label": "Unused category", "total": 0, "occasions": 0, "fact_id": "f-zero"},
+            {"label": "Recorded zero", "total": 0, "occasions": 1, "fact_id": "f-zero"},
+        ])
+        data["measurements"][0]["by_role"] = [
+            {"label": "Unused role", "total": 0, "occasions": 0, "fact_id": "f-zero"},
+        ]
+        html = render_html(data)
+        self.assertNotIn("Unused category", html)
+        self.assertNotIn("Unused role", html)
+        self.assertNotIn("Show more: by role", html)
+        self.assertIn("Recorded zero", html)
+        self.assertIn('href="evidence.json" title="Fact ID: f-zero"', html)
+
+    def test_selected_preparation_is_nested_below_narrative_and_totals(self):
+        data = evidence()
+        preparation = build_preparation(data, "epb", [11])
+        draft = narrative()
+        draft["preparation_id"] = preparation["preparation_id"]
+        html = render_html(data, draft, preparation)
+        self.assertLess(html.index("Agent narrative — draft for review"),
+                        html.index("<summary>Verified totals and supporting details</summary>"))
+        self.assertLess(html.index("<summary>Verified totals and supporting details</summary>"),
+                        html.index("<summary>Selected preparation records</summary>"))
+        self.assertLess(html.index("<summary>Selected preparation records</summary>"),
+                        html.index("EPB preparation — draft for review"))
+
+    def test_draft_only_keeps_verified_facts_without_supporting_tables(self):
+        data = evidence()
+        html = render_html(data, narrative(), draft_only=True)
+        self.assertIn("Agent narrative — draft for review", html)
+        self.assertIn('href="evidence.json" title="Fact ID: f-total"', html)
+        self.assertIn("2 &lt;widgets&gt;", html)
+        self.assertIn("Verified totals are available in the separate totals tab and saved report.", html)
+        self.assertNotIn("<h2>Summary</h2>", html)
+        self.assertNotIn("<h2>Measured results</h2>", html)
+        self.assertNotIn("<table>", html)
+        self.assertNotIn("Selected preparation records", html)
+        with self.assertRaises(ValueError):
+            render_html(data, draft_only=True)
+        draft = narrative()
+        draft["sections"][0]["paragraphs"][0][1]["fact"] = "unknown"
+        with self.assertRaises(ValueError):
+            render_html(data, draft, draft_only=True)
+
+    def test_award_draft_heading_and_selected_sources(self):
+        data = evidence()
+        preparation = build_preparation(data, "award", [11])
+        draft = narrative()
+        draft["preparation_id"] = preparation["preparation_id"]
+        full_html = render_html(data, draft, preparation)
+        draft_html = render_html(data, draft, preparation, draft_only=True)
+        self.assertIn("<h1>Award draft</h1>", full_html)
+        self.assertIn("Award preparation — draft for review", full_html)
+        self.assertIn("Action — saved task title", full_html)
+        self.assertIn("Result — saved outcome", full_html)
+        self.assertIn("<dt>Impact</dt>", full_html)
+        self.assertIn("Selected record 11", full_html)
+        self.assertIn("<h1>Award draft</h1>", draft_html)
+        self.assertNotIn("Selected record 11", draft_html)
 
     def test_narrative_text_is_escaped(self):
         case = narrative()

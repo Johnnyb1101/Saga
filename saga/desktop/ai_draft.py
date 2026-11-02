@@ -109,6 +109,13 @@ class AIDraftDialog(QDialog):
         self.review.setOpenExternalLinks(False)
         self.review.setAccessibleName('AI draft for review')
         self.tabs.addTab(self.review, 'Review draft')
+        self.verified_totals = QTextBrowser()
+        self.verified_totals.setOpenLinks(False)
+        self.verified_totals.setOpenExternalLinks(False)
+        self.verified_totals.setAccessibleName('Verified report totals and source details')
+        evidence, preparation = self._snapshot.unpack()
+        self.verified_totals.setHtml(render_html(evidence, preparation=preparation))
+        self.tabs.addTab(self.verified_totals, 'Verified totals')
         layout.addWidget(self.tabs)
         self.status = _label('')
         layout.addWidget(self.status)
@@ -232,7 +239,7 @@ class AIDraftDialog(QDialog):
         evidence, preparation = self._snapshot.unpack()
         try:
             draft = parse_response(raw, evidence, preparation)
-            html = render_html(evidence, draft, preparation)
+            html = render_html(evidence, draft, preparation, draft_only=True)
         except (DraftError, ValueError) as exc:
             explanation = safe_failure_message(getattr(exc, 'reason', 'draft_structure')) + ' No report was saved.'
             self.status.setText(explanation)

@@ -9,7 +9,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from saga.preparation import build_preparation, preparation_guide
+from saga.preparation import REPORT_FORMATS, build_preparation, preparation_guide
 from saga.report_html import render_html, validate_narrative
 from saga.reporting import agent_input, build_evidence
 
@@ -158,7 +158,7 @@ def verify_package(destination):
         if content.get('report_id') != manifest.get('report_id'):
             raise ValueError('Report package mixes different evidence snapshots')
     report_format = manifest.get('report_format', 'general')
-    if report_format not in ('general', 'epb', 'cv'):
+    if report_format not in REPORT_FORMATS:
         raise ValueError('Invalid report format in package')
     if report_format != 'general':
         if 'preparation.json' not in files:
@@ -183,9 +183,9 @@ def main():
     parser.add_argument('--category')
     parser.add_argument('--role', dest='duty')
     parser.add_argument('--narrative', type=Path)
-    parser.add_argument('--format', choices=('general', 'epb', 'cv'), default='general', dest='report_format')
+    parser.add_argument('--format', choices=REPORT_FORMATS, default='general', dest='report_format')
     parser.add_argument('--record-id', type=int, action='append', dest='selected_ids',
-                        help='Accomplishment ID to include in EPB/CV; repeat to select more')
+                        help='Accomplishment ID to include in EPB/CV/Award; repeat to select more')
     args = parser.parse_args()
     try:
         output = publish(args.db, args.out, since=args.since, until=args.until,

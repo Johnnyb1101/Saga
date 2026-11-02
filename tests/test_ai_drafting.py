@@ -92,12 +92,44 @@ class DraftProtocolTests(unittest.TestCase):
             "pattern": "^[^0-9]*$"})
         self.assertEqual(options[1]["properties"]["fact"]["enum"], ["fact-total"])
 
+    def test_general_projection_removes_only_exact_measurement_duplicates(self):
+        data = evidence()
+        def metric(measure, ids, dimension, value=24):
+            return {'label': measure, 'display': str(value), 'value': value,
+                    'measure': measure, 'dimension': dimension, 'group': 'group',
+                    'source_record_ids': ids}
+        data['facts'].update({
+            'hours-role': metric('hours', [11], 'role'),
+            'hours-total': metric('hours', [11], 'total'),
+            'hours-category': metric('hours', [11], 'category'),
+            'hours-other-records': metric('hours', [12], 'category'),
+            'people-same-ids': metric('people', [11], 'total'),
+            'observed-zero': metric('hours', [13], 'category', 0),
+            'unobserved-zero': metric('hours', [], 'category', 0),
+            'review-eligible': {'label': 'Review counting', 'display': '1', 'value': 1,
+                                'measure': None, 'dimension': 'summary', 'group': 'review_counting',
+                                'source_record_ids': [11]},
+        })
+        original = copy.deepcopy(data)
+        request = build_request(data)
+        projection = json.loads(request['input'])
+        self.assertEqual(set(projection['facts']), {
+            'fact-total', 'hours-total', 'hours-other-records', 'people-same-ids',
+            'observed-zero', 'review-eligible'})
+        self.assertIn('eligible', projection['facts']['review-eligible']['label'])
+        self.assertEqual(data, original)
+        draft = narrative()
+        draft['sections'][0]['paragraphs'][0][1] = {'fact': 'hours-role'}
+        with self.assertRaises(DraftError) as caught:
+            parse_response(response(draft), data)
+        self.assertEqual(caught.exception.reason, 'unknown_fact')
+
     def test_selected_request_only_exposes_selected_fields_and_fact_refs(self):
         data = evidence()
         data["records"].append({"id": 12, "task_title": "UNSELECTED_SECRET",
                                 "outcome": "private", "category": "Other",
                                 "duty": None, "measure": None, "quantity": None})
-        for report_format in ("epb", "cv"):
+        for report_format in ("epb", "cv", "award"):
             with self.subTest(report_format=report_format):
                 prep = build_preparation(data, report_format, [11])
                 request = build_request(data, prep)

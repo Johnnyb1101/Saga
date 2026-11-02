@@ -113,7 +113,7 @@ class HistoryWidget(QWidget):
         self.show_report_button = QPushButton("Show report")
         self.report_format = QComboBox()
         self.report_format.setAccessibleName("Prepare report for")
-        for label, value in (("General report", "general"), ("EPB", "epb"), ("CV", "cv")):
+        for label, value in (("General report", "general"), ("EPB", "epb"), ("CV", "cv"), ("Award draft", "award")):
             self.report_format.addItem(label, value)
         self.ai_draft_button = QPushButton("Draft with AI")
         self.ai_draft_button.clicked.connect(self._draft_with_ai)

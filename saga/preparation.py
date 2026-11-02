@@ -6,12 +6,12 @@ import math
 from copy import deepcopy
 from decimal import Decimal
 
-REPORT_FORMATS = ("general", "epb", "cv")
+REPORT_FORMATS = ("general", "epb", "cv", "award")
 
 
 def _format_name(report_format):
     if not isinstance(report_format, str) or report_format not in REPORT_FORMATS:
-        raise ValueError("report format must be general, epb, or cv")
+        raise ValueError("report format must be general, epb, cv, or award")
     return report_format
 
 
@@ -22,6 +22,14 @@ def preparation_guide(report_format):
         "epb": ("Prepare an action, result, and impact draft for each selected record. "
                 "Identify task titles and outcomes as saved text. Mark impact missing unless "
                 "the author supplies supported wording. Use only Saga fact references for numbers."),
+        "award": ("Write one concise nomination paragraph, aiming for eighty to one hundred fifty words. "
+                  "Use selected saved actions and recorded results; use the candidate's name only "
+                  "if it appears in saved wording, otherwise say the nominee. Do not produce an "
+                  "activity inventory, category-by-category sections, or repeated role totals. "
+                  "Include each useful measurement once through its exact Saga fact reference. "
+                  "Do not invent wider impact, savings, improvements, qualifications or comparisons. "
+                  "Leave unsupported impact out of the nomination, rather than filling it in. "
+                  "This is a draft, not an official award form or a completed nomination."),
         "cv": ("Group selected accomplishments by saved role and category. Write concise "
                "review bullets from saved outcomes and task titles. Do not invent employers, "
                "employment dates, impact, or numerical claims. Use Saga fact references for numbers."),
@@ -68,7 +76,7 @@ def build_preparation(evidence, report_format="general", selected_ids=None):
     if report_format == "general" and selected_ids:
         raise ValueError("general report does not select records")
     if report_format != "general" and not selected_ids:
-        raise ValueError("EPB and CV reports require selected records")
+        raise ValueError("EPB, CV and Award reports require selected records")
     source = {}
     for row in records:
         if not isinstance(row, dict) or type(row.get("id")) is not int or row["id"] in source:

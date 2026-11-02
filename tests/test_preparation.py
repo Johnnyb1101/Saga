@@ -27,7 +27,7 @@ def evidence():
 class PreparationTests(unittest.TestCase):
     def test_selection_requires_known_unique_integer_ids_in_epb_and_cv(self):
         data = evidence()
-        for report_format in ("epb", "cv"):
+        for report_format in ("epb", "cv", "award"):
             for selected in (None, [], [11, 11], [99], [True], [11.0], ["11"], (11,)):
                 with self.subTest(format=report_format, ids=selected), self.assertRaises(ValueError):
                     build_preparation(data, report_format, selected)
