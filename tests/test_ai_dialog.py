@@ -19,6 +19,7 @@ if HAS_QT:
     from PySide6.QtWidgets import QApplication
 
     from saga.desktop.ai_draft import AIDraftDialog, SessionKey
+    from tests.qt_cleanup import close_and_destroy_widget
 
     class FakeSignal:
         def __init__(self):
@@ -271,7 +272,13 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
     def test_review_draft_is_separate_from_verified_tables(self):
         self.dialog.key_input.setText('fake-test-key')
         self.dialog.send_button.click()
-        self.transport.succeeded.emit(self.response())
+        raw = json.loads(self.response())
+        draft = json.loads(raw['output'][0]['content'][0]['text'])
+        paragraph = draft['sections'][0]['paragraphs'][0]
+        paragraph[-2] = {'text': '. Recorded '}
+        paragraph.append({'text': ' of hours.'})
+        raw['output'][0]['content'][0]['text'] = json.dumps(draft)
+        self.transport.succeeded.emit(json.dumps(raw).encode())
         self.assertIn('Recorded accomplishments:', self.dialog.review.toPlainText())
         self.assertNotIn('Measured results', self.dialog.review.toPlainText())
         self.assertIn('Measured results', self.dialog.verified_totals.toPlainText())
@@ -279,6 +286,9 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         self.assertEqual(self.dialog.format_label.text(), 'Report format: General report')
         self.assertIn('General report', self.dialog.windowTitle())
         self.assertIn('2.5', self.dialog.review.toPlainText())
+        self.assertIn('Recorded 2.5 hours.', self.dialog.review.toPlainText())
+        self.assertNotIn(' of hours', self.dialog.review.toPlainText())
+        self.assertEqual(len(self.transport.calls), 1)
 
     def test_model_change_invalidates_review_and_draft(self):
         self.dialog.key_input.setText('fake-test-key')
@@ -312,7 +322,7 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         from saga.desktop.history import HistoryWidget
 
         widget = HistoryWidget(ArchiveService(self.database))
-        self.addCleanup(widget.close)
+        self.addCleanup(close_and_destroy_widget, widget)
         widget.use_from.setChecked(False)
         widget.use_to.setChecked(False)
         with patch('saga.desktop.ai_draft.AIDraftDialog') as dialog:

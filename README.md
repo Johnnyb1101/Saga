@@ -993,6 +993,11 @@ an existing number reference only when it exactly matches one verified figure fo
 the same unit and scope. Conflicting, ambiguous or unsupported quantity phrases
 remain rejected. This correction runs locally, preserves the recorded totals,
 and makes no additional API request.
+Drafting instructions request short, neutral sentences without unsupported
+assessments or invented actors. For new General AI drafts, a narrow local cleanup
+removes a surplus "of" between a measured fact reference and its exact unit.
+It preserves the figure and unit, and does not rewrite saved reports or source
+wording.
 Wording and inferred meaning still need human review; these checks do not prove
 every claim. The report uses the snapshot captured when its dialog
 opened, even if the archive changes afterward; reopen to use newer data.

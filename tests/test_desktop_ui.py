@@ -20,6 +20,7 @@ if PYSIDE6_AVAILABLE:
     from saga import db, writes
     from saga.desktop.settings import SettingsStore
     from saga.desktop.window import MainWindow
+    from tests.qt_cleanup import close_and_destroy_widget, destroy_widget
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "Optional PySide6 desktop dependency is not installed")
@@ -40,6 +41,7 @@ class DesktopUiTests(unittest.TestCase):
     def _close_window(self):
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Discard):
             self.window.close()
+        destroy_widget(self.window)
 
     def test_first_launch_create_and_reopen_selected_archive(self):
         self.assertIs(self.window.pages.currentWidget(), self.window.setup_page)
@@ -49,7 +51,7 @@ class DesktopUiTests(unittest.TestCase):
         self.assertEqual(self.store.load()["database"], str(self.database.resolve()))
         self.assertEqual(self.store.export_for(self.database), (self.database.parent / "saga-exports").resolve())
         reopened = MainWindow(self.store)
-        self.addCleanup(reopened.close)
+        self.addCleanup(close_and_destroy_widget, reopened)
         self.assertIs(reopened.pages.currentWidget(), reopened.archive_page)
         self.assertEqual(reopened.service.database, self.database.resolve())
 

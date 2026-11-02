@@ -9,6 +9,7 @@ import re
 from typing import ClassVar
 
 from saga.draft_quantities import repair_quantities
+from saga.draft_wording import clean_draft_wording
 from saga.preparation import preparation_guide, validate_preparation
 from saga.report_html import validate_narrative
 
@@ -210,12 +211,20 @@ def build_request(evidence, preparation=None, model=DEFAULT_MODEL):
         "outcomes, labels, categories, or roles. Use only the supplied facts. "
         "Do not invent numbers, spelled-out metrics, dates, employers, impacts, "
         "or other claims. Do not infer an impact from an action or outcome. "
+        "Use short, plain, grammatical sentences with neutral verbs such as "
+        "recorded, closed and coordinated. Avoid unsupported assessments such "
+        "as effectively, successfully or significantly in your own wording. "
+        "Do not invent a team or another actor, or add vague benefits such as "
+        "supporting ongoing efforts. Preserve exact measurement labels and "
+        "clearly attributed saved wording, even when they contain descriptive words. "
         "Place every numeric claim in a fact segment containing an exact supplied "
         "fact ID; never put literal digits or spelled-out quantities in headings "
         "or text segments. Alternate text and fact segments, for example "
         "[{\"text\":\"Recorded \"},{\"fact\":\"the supplied fact ID\"},"
         "{\"text\":\" widgets.\"}]. For General reports, a measurement fact "
         "renders only its number, so put its exact unit in connecting text. "
+        "Place that unit directly after the number reference; do not insert "
+        "the word of between a quantity and its unit unless it belongs to the exact label. "
         "For selected-record reports, a measurement fact already renders its "
         "number and exact unit; do not repeat the unit. Never write a raw fact "
         "ID or label in place of a fact segment. Include at least one measured "
@@ -454,6 +463,7 @@ def parse_response(rawbytes, evidence, preparation=None):
             narrative = repair_quantities(narrative, evidence, preparation, allowed_facts)
         except ValueError as exc:
             raise DraftError("unverified_number") from exc
+        narrative = clean_draft_wording(narrative, evidence, preparation)
         validate_narrative(narrative, evidence, preparation)
         for section in narrative["sections"]:
             for paragraph in section["paragraphs"]:

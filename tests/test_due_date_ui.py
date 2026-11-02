@@ -19,6 +19,7 @@ if HAS_QT:
     from saga.desktop.due_date import DueDateDialog
     from saga.desktop.settings import SettingsStore
     from saga.desktop.window import MainWindow
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 desktop dependency is not installed')
@@ -34,7 +35,7 @@ class DueDateUiTests(unittest.TestCase):
         self.database = self.root / 'archive.db'
         self.window = MainWindow(SettingsStore(self.root / 'settings.json'))
         self.window.create_new_archive(self.database)
-        self.addCleanup(self.window.close)
+        self.addCleanup(close_and_destroy_widget, self.window)
         with closing(db.connect(self.database)) as con:
             self.task_id = writes.add_task(con, 'Invented task', 'work', due_date='2026-01-01')
         self.window.refresh_today()
@@ -58,7 +59,7 @@ class DueDateUiTests(unittest.TestCase):
         self.assertEqual(len(self.window.sections['due_today'].cards), 1)
         task = self.window.service.task_details(self.task_id)
         dialog = DueDateDialog(self.window.service, task)
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         dialog.has_date.setChecked(False)
         dialog.show_preview()
         self.assertIn('After: No due date', dialog.preview.text())
@@ -74,7 +75,7 @@ class DueDateUiTests(unittest.TestCase):
     def test_edit_invalidates_preview_cancel_does_not_save(self):
         task = self.window.service.task_details(self.task_id)
         dialog = DueDateDialog(self.window.service, task)
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         dialog.show_preview()
         self.assertTrue(dialog.save_button.isEnabled())
         dialog.date.setDate(QDate.currentDate())

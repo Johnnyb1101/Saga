@@ -382,6 +382,27 @@ class DraftProtocolTests(unittest.TestCase):
             parse_response(response(narrative(prep)), data, prep)
         self.assertEqual(caught.exception.reason, "unknown_fact")
 
+    def test_new_general_draft_cleans_surplus_of_without_changing_number_references(self):
+        data = evidence()
+        data["facts"]["hours-total"] = {
+            "label": "volunteer hours total", "display": "40", "value": 40,
+            "measure": "volunteer hours", "dimension": "total", "group": None,
+            "source_record_ids": [11],
+        }
+        data["measurements"] = [{"measure": "volunteer hours", "total": 40,
+                                 "occasions": 1, "fact_id": "hours-total"}]
+        draft = narrative()
+        draft["sections"][0]["paragraphs"] = [[
+            {"text": "Recorded "}, {"fact": "hours-total"}, {"text": " of volunteer hours."},
+        ]]
+        original_data, original_draft = copy.deepcopy(data), copy.deepcopy(draft)
+        fixed = parse_response(response(draft), data)
+        self.assertEqual(fixed["sections"][0]["paragraphs"], [[
+            {"text": "Recorded "}, {"fact": "hours-total"}, {"text": " volunteer hours."},
+        ]])
+        self.assertEqual(data, original_data)
+        self.assertEqual(draft, original_draft)
+
     def test_reasoning_metadata_with_one_text_message_is_accepted(self):
         data = evidence()
         wrapped = json.loads(response(narrative()))

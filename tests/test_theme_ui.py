@@ -16,6 +16,7 @@ if HAS_QT:
     from saga.desktop.settings import SettingsStore
     from saga.desktop.themes import ACCENTS, ThemePicker, apply_theme
     from saga.desktop.window import MainWindow
+    from tests.qt_cleanup import close_and_destroy_widget, destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 dependency not installed')
@@ -30,13 +31,18 @@ class ThemeUiTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.store = SettingsStore(self.root / 'settings.json')
         self.window = MainWindow(self.store)
-        self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self._close_window, self.window)
+
+    @staticmethod
+    def _close_window(window):
+        with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Discard):
+            close_and_destroy_widget(window)
 
     def test_live_picker_reopens_and_keeps_draft(self):
         self.window.create_new_archive(self.root / 'test.db')
         self.window.entry.task.title.setText('Invented unsaved task')
         dialog = self.window._settings_dialog()
-        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(destroy_widget, dialog)
         picker = dialog.findChild(ThemePicker)
         picker.mode.setCurrentIndex(picker.mode.findData('dark'))
         picker.buttons['magenta'].click()
@@ -44,12 +50,12 @@ class ThemeUiTests(unittest.TestCase):
         self.assertEqual(self.window.entry.task.title.text(), 'Invented unsaved task')
         self.assertEqual(self.window.palette().color(QPalette.ColorRole.Highlight).name(), ACCENTS['magenta'][1])
         reopened = MainWindow(self.store)
-        self.addCleanup(reopened.deleteLater)
+        self.addCleanup(self._close_window, reopened)
         self.assertEqual(reopened.theme, self.window.theme)
 
     def test_failed_write_keeps_picker_and_colors(self):
         dialog = self.window._settings_dialog()
-        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(destroy_widget, dialog)
         picker = dialog.findChild(ThemePicker)
         before = self.window.styleSheet()
         with patch.object(self.store, 'set_theme', side_effect=OSError('blocked')), patch.object(QMessageBox, 'warning'):

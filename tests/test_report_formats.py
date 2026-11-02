@@ -20,6 +20,7 @@ if HAS_QT:
 
     from saga.desktop.history import HistoryWidget
     from saga.desktop.report_selection import AccomplishmentSelectionDialog
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 class FormatPackageTests(unittest.TestCase):
@@ -105,7 +106,7 @@ class FormatPickerTests(unittest.TestCase):
 
     def test_picker_requires_selection_and_preserves_record_ids(self):
         dialog = AccomplishmentSelectionDialog(self.records, 'epb')
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         save = dialog.buttons.button(QDialogButtonBox.StandardButton.Save)
         self.assertFalse(save.isEnabled())
         dialog.records_list.item(1).setCheckState(Qt.CheckState.Checked)
@@ -119,7 +120,7 @@ class FormatPickerTests(unittest.TestCase):
     def test_ui_passes_format_selection_and_visible_filters(self):
         service = SimpleNamespace(database=Path('source.db'), history_report=lambda **scope: {'accomplishments': self.records})
         widget = HistoryWidget(service)
-        self.addCleanup(widget.close)
+        self.addCleanup(close_and_destroy_widget, widget)
         widget.from_date.setDate(QDate(2024, 2, 1))
         widget.to_date.setDate(QDate(2024, 2, 29))
         for report_format in ('epb', 'cv', 'award'):
@@ -137,7 +138,7 @@ class FormatPickerTests(unittest.TestCase):
 
     def test_cancelled_or_empty_selection_never_saves(self):
         widget = HistoryWidget(SimpleNamespace(database=Path('source.db'), history_report=lambda **s: {'accomplishments': self.records}))
-        self.addCleanup(widget.close)
+        self.addCleanup(close_and_destroy_widget, widget)
         widget.report_format.setCurrentIndex(1)
         with (patch('saga.desktop.history.AccomplishmentSelectionDialog') as picker,
               patch('saga.desktop.history.QFileDialog.getExistingDirectory') as choose,
@@ -153,7 +154,7 @@ class FormatPickerTests(unittest.TestCase):
     def test_empty_range_and_load_failure_do_not_open_picker(self):
         service = SimpleNamespace(database=Path('source.db'), history_report=lambda **scope: {'accomplishments': []})
         widget = HistoryWidget(service)
-        self.addCleanup(widget.close)
+        self.addCleanup(close_and_destroy_widget, widget)
         widget.report_format.setCurrentIndex(1)
         with patch('saga.desktop.history.AccomplishmentSelectionDialog') as picker:
             widget.save_report_button.click()

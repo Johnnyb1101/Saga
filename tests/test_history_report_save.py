@@ -19,6 +19,7 @@ if HAS_QT:
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     from saga.desktop.history import HistoryWidget
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 desktop dependency is not installed')
@@ -31,7 +32,7 @@ class HistoryReportSaveTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.widget = HistoryWidget(SimpleNamespace(database=Path(self.temp.name) / 'source.db'))
-        self.addCleanup(self.widget.close)
+        self.addCleanup(close_and_destroy_widget, self.widget)
         self.widget.from_date.setDate(QDate(2024, 2, 1))
         self.widget.to_date.setDate(QDate(2024, 2, 29))
         self.widget.category_filter.addItem('work', 'work')

@@ -18,6 +18,7 @@ if HAS_QT:
     from saga.application import ArchiveService
     from saga.desktop.settings import SettingsStore
     from saga.desktop.window import MainWindow
+    from tests.qt_cleanup import destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 desktop dependency is not installed')
@@ -38,6 +39,7 @@ class HistoryWindowTests(unittest.TestCase):
     def close_window(self):
         with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Discard):
             self.window.close()
+        destroy_widget(self.window)
 
     def record(self, text):
         with closing(db.connect(self.database)) as con:

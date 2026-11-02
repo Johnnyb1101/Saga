@@ -21,6 +21,7 @@ if PYSIDE6_AVAILABLE:
     from saga.application import ArchiveService
     from saga.desktop.completion import CompletionDialog
     from saga.desktop.task_entry import AddTaskWidget
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 class FakeService:
@@ -66,7 +67,7 @@ class CompletionFormTests(unittest.TestCase):
 
     def test_checkbox_expands_details_and_preserves_shared_context(self):
         widget = AddTaskWidget(self.service)
-        self.addCleanup(widget.close)
+        self.addCleanup(close_and_destroy_widget, widget)
         widget.task.title.setText("Submit applications")
         widget.task.category.setCurrentIndex(widget.task.category.findData("work"))
         widget.task.role.setCurrentIndex(widget.task.role.findData("Volunteer"))
@@ -84,7 +85,7 @@ class CompletionFormTests(unittest.TestCase):
 
     def test_measurement_fields_follow_choice(self):
         widget = AddTaskWidget(self.service)
-        self.addCleanup(widget.close)
+        self.addCleanup(close_and_destroy_widget, widget)
         widget.already_finished.setChecked(True)
         form = widget.task.completion_details
         self.assertFalse(form.form_layout.isRowVisible(form.measure))
@@ -102,7 +103,7 @@ class CompletionFormTests(unittest.TestCase):
 
     def test_tracked_context_cancel_double_save_and_export_retry(self):
         dialog = CompletionDialog(self.service, 7)
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         form = dialog.form
         snapshot = dialog.task.copy()
         self.assertIn("Submit applications", form.task_context.text())
@@ -133,7 +134,7 @@ class CompletionFormTests(unittest.TestCase):
     def test_escape_preserves_draft_when_discard_is_cancelled(self):
         dialog = CompletionDialog(self.service, 7)
         dialog.show()
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         dialog.form.outcome.setPlainText("A draft to keep")
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel) as question:
             QTest.keyClick(dialog, Qt.Key.Key_Escape)
@@ -146,7 +147,7 @@ class CompletionFormTests(unittest.TestCase):
 
     def test_dialog_fits_available_screen_and_scrolls(self):
         dialog = CompletionDialog(self.service, 7)
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         dialog.show()
         QApplication.processEvents()
         available = QApplication.primaryScreen().availableGeometry()

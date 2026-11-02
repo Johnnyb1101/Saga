@@ -18,6 +18,7 @@ if HAS_QT:
     from saga.desktop.settings import SettingsStore
     from saga.desktop.stop_repeating import StopRepeatingDialog
     from saga.desktop.window import MainWindow
+    from tests.qt_cleanup import destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 desktop dependency is not installed')
@@ -38,6 +39,7 @@ class RecurringUiTests(unittest.TestCase):
     def close_window(self):
         with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Discard):
             self.window.close()
+        destroy_widget(self.window)
 
     def test_create_recurring_task_preview_draft_and_today_label(self):
         form = self.window.entry.task

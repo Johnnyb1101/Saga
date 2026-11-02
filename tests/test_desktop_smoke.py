@@ -15,6 +15,7 @@ if HAS_QT:
     from PySide6.QtWidgets import QApplication
 
     from saga.desktop import smoke
+    from tests.qt_cleanup import destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, "Optional PySide6 desktop dependency is not installed")
@@ -27,6 +28,18 @@ class DesktopSmokeTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.report = Path(temporary.name) / "smoke.json"
+        for name in ("MainWindow", "CompletionDialog"):
+            constructor = getattr(smoke, name)
+            factory = patch.object(smoke, name, side_effect=self._owned_widget(constructor))
+            factory.start()
+            self.addCleanup(factory.stop)
+
+    def _owned_widget(self, constructor):
+        def create(*args, **kwargs):
+            widget = constructor(*args, **kwargs)
+            self.addCleanup(destroy_widget, widget)
+            return widget
+        return create
 
     def test_success_checks_all_paths_and_writes_report(self):
         self.assertEqual(smoke.run_smoke(self.app, self.report), 0)

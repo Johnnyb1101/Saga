@@ -17,6 +17,7 @@ if HAS_QT:
     from saga.application import ArchiveService
     from saga.desktop.task_entry import AddTaskWidget
     from saga.desktop.window import TodaySection
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 desktop dependency is not installed')
@@ -32,7 +33,7 @@ class ScheduleSelectorsUiTests(unittest.TestCase):
         db.init_db(self.database)
         self.service = ArchiveService(self.database)
         self.widget = AddTaskWidget(self.service)
-        self.addCleanup(self.widget.close)
+        self.addCleanup(close_and_destroy_widget, self.widget)
         self.form = self.widget.task
         self.form.title.setText('Invented scheduled task')
         self.form.category.setCurrentIndex(self.form.category.findData('work'))
@@ -97,7 +98,7 @@ class ScheduleSelectorsUiTests(unittest.TestCase):
         self.assertEqual(task['due_date'], '2026-10-31')
         rows = self.service.today(on='2026-10-31')['due_today']
         section = TodaySection('Tasks', ())
-        self.addCleanup(section.close)
+        self.addCleanup(close_and_destroy_widget, section)
         section.show_rows(rows)
         self.assertIn('15', section.cards[0].details_label.text())
         self.assertIn('31', section.cards[0].details_label.text())

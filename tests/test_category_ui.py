@@ -22,6 +22,7 @@ if PYSIDE6_AVAILABLE:
     from saga.application import ArchiveService, create_archive
     from saga.desktop.categories import CreateCategoryDialog, ManageCategoriesDialog
     from saga.desktop.task_entry import AddTaskWidget
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 class CategoryService:
@@ -72,7 +73,7 @@ class CategoryUiTests(unittest.TestCase):
     def setUp(self):
         self.service = CategoryService()
         self.widget = AddTaskWidget(self.service)
-        self.addCleanup(self.widget.close)
+        self.addCleanup(close_and_destroy_widget, self.widget)
 
     def test_create_selects_category_and_preserves_inline_draft(self):
         task = self.widget.task
@@ -193,7 +194,7 @@ class CategoryUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             service = ArchiveService(create_archive(Path(temporary) / 'categories.db'))
             widget = AddTaskWidget(service)
-            self.addCleanup(widget.close)
+            self.addCleanup(close_and_destroy_widget, widget)
             create = CreateCategoryDialog(service)
             create.name.setText('My category')
             create.create()

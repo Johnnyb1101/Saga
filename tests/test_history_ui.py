@@ -13,6 +13,7 @@ if HAS_QT:
     from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPlainTextEdit
 
     from saga.desktop.history import HistoryWidget
+    from tests.qt_cleanup import close_and_destroy_widget
 
 
 class FakeService:
@@ -63,7 +64,7 @@ class HistoryUiTests(unittest.TestCase):
     def setUp(self):
         self.service = FakeService()
         self.widget = HistoryWidget(self.service)
-        self.addCleanup(self.widget.close)
+        self.addCleanup(close_and_destroy_widget, self.widget)
 
     def test_lazy_initialization_shortcuts_and_inclusive_custom_range(self):
         self.assertEqual(self.service.filter_calls, 0)
@@ -139,7 +140,7 @@ class HistoryUiTests(unittest.TestCase):
         row = self.widget._accomplishments[0]
         self.assertEqual(row["id"], 42)
         dialog = self.widget._detail_dialog(row)
-        self.addCleanup(dialog.close)
+        self.addCleanup(close_and_destroy_widget, dialog)
         fields = dialog.findChildren(QLabel)
         self.assertTrue(any(label.text() == "<Project>" and
                             label.textFormat() == Qt.TextFormat.PlainText for label in fields))

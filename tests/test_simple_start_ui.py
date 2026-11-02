@@ -17,6 +17,7 @@ if HAS_QT:
     from saga.desktop.backup_settings import BackupSettings
     from saga.desktop.settings import SettingsStore
     from saga.desktop.window import MainWindow
+    from tests.qt_cleanup import destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, "Optional PySide6 desktop dependency is not installed")
@@ -40,6 +41,7 @@ class SimpleStartUiTests(unittest.TestCase):
     def _close(self):
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Discard):
             self.window.close()
+        destroy_widget(self.window)
 
     def test_get_started_creates_local_archive_once_and_hides_path(self):
         self.assertEqual(self.window.get_started_button.text(), "Get started")
@@ -90,7 +92,7 @@ class SimpleStartUiTests(unittest.TestCase):
 
     def test_advanced_starts_collapsed_even_without_archive(self):
         dialog = self.window._settings_dialog()
-        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(destroy_widget, dialog)
         self.assertFalse(dialog.advanced_toggle.isChecked())
         create = next(button for button in dialog.findChildren(QPushButton)
                       if button.text().startswith("Create archive in another"))
@@ -101,7 +103,7 @@ class SimpleStartUiTests(unittest.TestCase):
     def test_cancel_folder_selection_does_not_enable_backups(self):
         self.window.get_started()
         dialog = self.window._settings_dialog()
-        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(destroy_widget, dialog)
         controls = dialog.findChild(BackupSettings)
         with patch.object(QFileDialog, "getExistingDirectory", return_value=""):
             controls.choose_button.click()
@@ -125,7 +127,7 @@ class SimpleStartUiTests(unittest.TestCase):
         destination.mkdir()
         with patch("saga.desktop.backup_settings.detect_onedrive", return_value=None):
             dialog = self.window._settings_dialog()
-        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(destroy_widget, dialog)
         controls = dialog.findChild(BackupSettings)
         controls.checkbox.click()
         self.assertFalse(controls.checkbox.isChecked())
@@ -151,7 +153,7 @@ class SimpleStartUiTests(unittest.TestCase):
         destination.mkdir(parents=True)
         with patch("saga.desktop.backup_settings.detect_onedrive", return_value=destination.parent):
             dialog = self.window._settings_dialog()
-        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(destroy_widget, dialog)
         controls = dialog.findChild(BackupSettings)
         with patch.object(self.store, "set_backup", side_effect=OSError("settings unavailable")):
             controls.checkbox.click()

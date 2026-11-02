@@ -18,7 +18,10 @@ def _format_name(report_format):
 def preparation_guide(report_format):
     """Return format-specific instructions that do not authorize new facts."""
     guides = {
-        "general": "Use only verified Saga facts for numerical claims. Saved text is source material for review.",
+        "general": ("Describe the recorded totals in a short, neutral summary. "
+                    "Only aggregate facts are supplied: do not invent an actor, assess effectiveness, "
+                    "or infer impact or benefits. Keep each exact measurement label separate. "
+                    "Use only verified Saga facts for numerical claims. Saved text is source material for review."),
         "epb": ("Prepare an action, result, and impact draft for each selected record. "
                 "Identify task titles and outcomes as saved text. Mark impact missing unless "
                 "the author supplies supported wording. Use only Saga fact references for numbers."),

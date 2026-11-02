@@ -21,6 +21,7 @@ if HAS_QT:
     from saga.desktop.completion import CompletionDialog
     from saga.desktop.settings import SettingsStore
     from saga.desktop.window import MainWindow, TaskCard
+    from tests.qt_cleanup import destroy_widget
 
 
 @unittest.skipUnless(HAS_QT, 'Optional PySide6 desktop dependency is not installed')
@@ -41,6 +42,7 @@ class TodayCompletionUiTests(unittest.TestCase):
     def _close(self):
         with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Discard):
             self.window.close()
+        destroy_widget(self.window)
 
     def test_every_open_task_section_can_complete_and_preserves_add_task_draft(self):
         today = dt.date.today()
