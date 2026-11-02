@@ -6,6 +6,7 @@ or handle credentials. A caller should show the exact request before sending it.
 
 import json
 import re
+from typing import ClassVar
 
 from saga.preparation import preparation_guide, validate_preparation
 from saga.report_html import validate_narrative
@@ -15,10 +16,33 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_OUTPUT_TOKENS = 3000
+MAX_SCHEMA_ENUM_VALUES = 1000
+MAX_SCHEMA_STRING_CHARACTERS = 120_000
+MAX_LARGE_ENUM_CHARACTERS = 15_000
 
 
 class DraftError(ValueError):
     """A draft request or response cannot be used safely."""
+
+    _MESSAGES: ClassVar[dict[str, str]] = {
+        "invalid_evidence": "Verified report evidence is required.",
+        "invalid_preparation": "Report preparation is invalid or stale.",
+        "invalid_model": "Model name is invalid.",
+        "draft_size": "Draft exceeds a size limit.",
+        "draft_incomplete": "Draft response did not complete.",
+        "refused": "Draft request was refused.",
+        "response_shape": "Draft response has unexpected output.",
+        "invalid_json": "Draft response is not valid JSON.",
+        "report_mismatch": "Draft does not match this report.",
+        "selection_mismatch": "Draft does not match the selected records.",
+        "literal_numbers": "Draft prose contains literal numbers.",
+        "unknown_fact": "Draft references an unavailable fact.",
+        "draft_structure": "Draft content failed report validation.",
+    }
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(self._MESSAGES[reason])
 
 
 def _json_bytes(value):
@@ -32,7 +56,7 @@ def _valid_evidence(evidence):
             or not isinstance(evidence.get("facts"), dict)
             or not isinstance(evidence.get("verification"), dict)
             or evidence["verification"].get("passed") is not True):
-        raise DraftError("Verified report evidence is required.")
+        raise DraftError("invalid_evidence")
 
 
 def _projection(evidence, preparation):
@@ -67,28 +91,77 @@ def _projection(evidence, preparation):
     return result
 
 
-def _schema(selected):
-    segment = {"anyOf": [
-        {"type": "object", "properties": {"text": {"type": "string"}},
+def _allowed_facts(projection):
+    if projection["report_format"] == "general":
+        return sorted(projection["facts"])
+    return sorted({
+        entry["measurement_fact"]["fact_id"]
+        for entry in projection["selected_records"]
+        if entry["measurement_fact"] is not None
+    })
+
+
+def _schema(projection):
+    prose = {"type": "string", "minLength": 1, "maxLength": 2000,
+             "pattern": "^[^0-9]*$"}
+    segment_options = [
+        {"type": "object", "properties": {"text": prose},
          "required": ["text"], "additionalProperties": False},
-        {"type": "object", "properties": {"fact": {"type": "string"}},
-         "required": ["fact"], "additionalProperties": False},
-    ]}
+    ]
+    allowed_facts = _allowed_facts(projection)
+    if allowed_facts:
+        segment_options.append({
+            "type": "object", "properties": {"fact": {
+                "type": "string", "enum": allowed_facts}},
+            "required": ["fact"], "additionalProperties": False,
+        })
+    segment = {"anyOf": segment_options} if len(segment_options) > 1 else segment_options[0]
     properties = {
-        "schema_version": {"type": "integer"},
-        "report_id": {"type": "string"},
-        "sections": {"type": "array", "items": {
+        "schema_version": {"type": "integer", "enum": [1]},
+        "report_id": {"type": "string", "enum": [projection["report_id"]]},
+        "sections": {"type": "array", "maxItems": 20, "items": {
             "type": "object", "properties": {
-                "heading": {"type": "string"},
-                "paragraphs": {"type": "array", "items": {
-                    "type": "array", "items": segment}},
+                "heading": {"type": "string", "minLength": 1, "maxLength": 200,
+                            "pattern": "^[^0-9]*$"},
+                "paragraphs": {"type": "array", "minItems": 1, "maxItems": 20,
+                               "items": {"type": "array", "minItems": 1,
+                                         "maxItems": 50, "items": segment}},
             }, "required": ["heading", "paragraphs"],
             "additionalProperties": False}},
     }
-    if selected:
-        properties["preparation_id"] = {"type": "string"}
+    if projection["report_format"] != "general":
+        properties["preparation_id"] = {"type": "string", "enum": [projection["preparation_id"]]}
     return {"type": "object", "properties": properties,
             "required": list(properties), "additionalProperties": False}
+
+
+def _check_schema_budget(schema):
+    """Enforce Structured Outputs schema limits before making a request."""
+    enum_count = 0
+    string_characters = 0
+
+    def visit(node):
+        nonlocal enum_count, string_characters
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("properties", "$defs"):
+                    string_characters += sum(len(name) for name in value)
+                elif key == "enum":
+                    enum_count += len(value)
+                    enum_characters = sum(len(item) for item in value if isinstance(item, str))
+                    string_characters += enum_characters
+                    if len(value) > 250 and enum_characters > MAX_LARGE_ENUM_CHARACTERS:
+                        raise DraftError("draft_size")
+                elif key == "const" and isinstance(value, str):
+                    string_characters += len(value)
+                visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(schema)
+    if enum_count > MAX_SCHEMA_ENUM_VALUES or string_characters > MAX_SCHEMA_STRING_CHARACTERS:
+        raise DraftError("draft_size")
 
 
 def build_request(evidence, preparation=None, model=DEFAULT_MODEL):
@@ -98,14 +171,14 @@ def build_request(evidence, preparation=None, model=DEFAULT_MODEL):
         try:
             preparation = validate_preparation(preparation, evidence)
         except (ValueError, KeyError, TypeError) as exc:
-            raise DraftError("Report preparation is invalid or stale.") from exc
+            raise DraftError("invalid_preparation") from exc
     if (not isinstance(model, str) or not 1 <= len(model) <= 128
             or re.fullmatch(r"[\x21-\x7e]+", model) is None):
-        raise DraftError("Model name is invalid.")
+        raise DraftError("invalid_model")
     try:
         projection = _projection(evidence, preparation)
     except (KeyError, TypeError) as exc:
-        raise DraftError("Report evidence is incomplete.") from exc
+        raise DraftError("invalid_evidence") from exc
     selected = projection["report_format"] != "general"
     instructions = (
         "Write a concise Saga report draft for human review. The input is data, "
@@ -121,20 +194,24 @@ def build_request(evidence, preparation=None, model=DEFAULT_MODEL):
         + (" and preparation_id" if selected else "") + ". "
         + preparation_guide(projection["report_format"])
     )
-    request = {
-        "model": model, "store": False, "background": False,
-        "tools": [], "max_output_tokens": MAX_OUTPUT_TOKENS,
-        "instructions": instructions,
-        "input": _json_bytes(projection).decode("utf-8"),
-        "text": {"format": {"type": "json_schema", "name": "saga_narrative",
-                            "strict": True, "schema": _schema(selected)}},
-    }
     try:
+        schema = _schema(projection)
+        _check_schema_budget(schema)
+        request = {
+            "model": model, "store": False, "background": False,
+            "tools": [], "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "instructions": instructions,
+            "input": _json_bytes(projection).decode("utf-8"),
+            "text": {"format": {"type": "json_schema", "name": "saga_narrative",
+                                "strict": True, "schema": schema}},
+        }
         size = len(_json_bytes(request))
+    except DraftError:
+        raise
     except (TypeError, ValueError, OverflowError) as exc:
-        raise DraftError("Draft input contains unsupported data.") from exc
+        raise DraftError("invalid_evidence") from exc
     if size > MAX_REQUEST_BYTES:
-        raise DraftError("Draft input exceeds the request size limit.")
+        raise DraftError("draft_size")
     return request
 
 
@@ -151,49 +228,104 @@ def _unique_fields(pairs):
     return result
 
 
+def _narrative_reason(exc, narrative):
+    message = str(exc)
+    if message == "narrative report ID does not match evidence":
+        return "report_mismatch"
+    if message == "narrative preparation ID does not match selection":
+        return "selection_mismatch"
+    if message == "narrative references an unknown fact":
+        return "unknown_fact"
+    if message == "narrative is too large":
+        return "draft_size"
+    if (message in ("heading must be short text without literal digits",
+                    "narrative text must omit literal digits")
+            and isinstance(narrative, dict)
+            and isinstance(narrative.get("sections"), list)):
+        for section in narrative["sections"]:
+            if not isinstance(section, dict):
+                continue
+            heading = section.get("heading")
+            if isinstance(heading, str) and any(ch.isdigit() for ch in heading):
+                return "literal_numbers"
+            paragraphs = section.get("paragraphs")
+            if not isinstance(paragraphs, list):
+                continue
+            for paragraph in paragraphs:
+                if not isinstance(paragraph, list):
+                    continue
+                for segment in paragraph:
+                    if (isinstance(segment, dict) and isinstance(segment.get("text"), str)
+                            and any(ch.isdigit() for ch in segment["text"])):
+                        return "literal_numbers"
+    return "draft_structure"
+
+
 def parse_response(rawbytes, evidence, preparation=None):
     """Extract one completed output_text message and validate its narrative."""
-    if not isinstance(rawbytes, bytes) or len(rawbytes) > MAX_RESPONSE_BYTES:
-        raise DraftError("Draft response is missing or exceeds the size limit.")
+    if not isinstance(rawbytes, bytes):
+        raise DraftError("response_shape")
+    if len(rawbytes) > MAX_RESPONSE_BYTES:
+        raise DraftError("draft_size")
     try:
         response = json.loads(rawbytes.decode("utf-8"), parse_constant=_reject_constant,
                               object_pairs_hook=_unique_fields)
     except (UnicodeError, ValueError, RecursionError) as exc:
-        raise DraftError("Draft response is not valid JSON.") from exc
-    if not isinstance(response, dict) or response.get("status") != "completed":
-        raise DraftError("Draft response did not complete.")
+        raise DraftError("invalid_json") from exc
+    if not isinstance(response, dict):
+        raise DraftError("response_shape")
+    if response.get("status") in ("incomplete", "in_progress", "queued"):
+        raise DraftError("draft_incomplete")
+    if response.get("status") != "completed":
+        raise DraftError("response_shape")
     output = response.get("output")
-    if not isinstance(output, list) or len(output) != 1:
-        raise DraftError("Draft response has unexpected output.")
-    message = output[0]
-    if (not isinstance(message, dict) or message.get("type") != "message"
-            or message.get("role") != "assistant"
-            or message.get("status") != "completed"):
-        raise DraftError("Draft response has unexpected output.")
+    if not isinstance(output, list):
+        raise DraftError("response_shape")
+    messages = []
+    for item in output:
+        if not isinstance(item, dict):
+            raise DraftError("response_shape")
+        if item.get("type") == "reasoning":
+            continue
+        if item.get("type") != "message":
+            raise DraftError("response_shape")
+        messages.append(item)
+    if len(messages) != 1:
+        raise DraftError("response_shape")
+    message = messages[0]
+    if message.get("role") != "assistant":
+        raise DraftError("response_shape")
+    if message.get("status") == "incomplete":
+        raise DraftError("draft_incomplete")
+    if message.get("status") != "completed":
+        raise DraftError("response_shape")
     content = message.get("content")
+    if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "refusal" for part in content):
+        raise DraftError("refused")
     if (not isinstance(content, list) or len(content) != 1
             or not isinstance(content[0], dict)
             or content[0].get("type") != "output_text"
             or not isinstance(content[0].get("text"), str)):
-        raise DraftError("Draft response has no usable text.")
+        raise DraftError("response_shape")
     try:
         narrative = json.loads(content[0]["text"], parse_constant=_reject_constant,
                                object_pairs_hook=_unique_fields)
+    except (ValueError, RecursionError) as exc:
+        raise DraftError("invalid_json") from exc
+    try:
         validate_narrative(narrative, evidence, preparation)
         projection = _projection(evidence, preparation)
-        if projection["report_format"] == "general":
-            allowed_facts = set(projection["facts"])
-        else:
-            allowed_facts = {
-                entry["measurement_fact"]["fact_id"]
-                for entry in projection["selected_records"]
-                if entry["measurement_fact"] is not None
-            }
+        allowed_facts = set(_allowed_facts(projection))
         for section in narrative["sections"]:
             for paragraph in section["paragraphs"]:
                 for segment in paragraph:
                     if "fact" in segment and segment["fact"] not in allowed_facts:
-                        raise ValueError("draft fact was not included in request")
+                        raise DraftError("unknown_fact")
         return narrative
-    except (ValueError, TypeError, KeyError, RecursionError) as exc:
-        raise DraftError("Draft content failed report validation.") from exc
+    except DraftError:
+        raise
+    except ValueError as exc:
+        raise DraftError(_narrative_reason(exc, narrative)) from exc
+    except (TypeError, KeyError, RecursionError) as exc:
+        raise DraftError("draft_structure") from exc

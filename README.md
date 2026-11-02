@@ -1015,6 +1015,21 @@ that OpenAI has not already processed or charged for a request. The request uses
 `store: false`, which is not a guarantee of zero retention; see
 [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data).
 Saga remains usable without AI. Provider failures do not change accomplishments.
+Failures now distinguish a rejected key, permissions/model access, billing or
+credit exhaustion, rate limits, rejected requests, service errors, and local
+DNS/TLS/connection/timeouts. Error details are fixed Saga messages selected by
+safe codes; provider text and API keys are never displayed. A generic rate-limit
+message may require checking both account limits and temporary traffic limits.
+Retry only when you choose to; Saga makes no automatic repeat request.
+Draft validation also reports safe categories: unfinished or declined responses,
+unsupported response structure, invalid structured text, mismatched report or
+selection, literal numbers, unknown fact references, and layout limits. Rejected
+drafts show the explanation on the Review draft tab; their contents are not
+shown or saved. The request schema binds report/selection IDs and allowed fact
+references, and restricts prose to the same shape Saga validates. Local numerical
+checks remain authoritative; the schema does not prove the wording or impact.
+Oversized fact lists are refused without dropping data: narrow the date range,
+filters, or selected accomplishments before sending.
 
 ### Readable report and agent evidence package
 

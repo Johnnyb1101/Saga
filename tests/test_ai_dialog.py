@@ -218,6 +218,38 @@ class AIDialogTests(ArchiveFixture, unittest.TestCase):
         self.transport.succeeded.emit(b'not valid')
         self.assertFalse(self.dialog.save_button.isEnabled())
         self.assertIsNone(self.dialog._draft)
+        self.assertEqual(self.dialog.review.toPlainText(), self.dialog.status.text())
+
+    def test_validation_reason_is_safe_and_visible_in_review(self):
+        from saga.ai_drafting import DraftError
+        from saga.ai_errors import safe_failure_message
+
+        self.dialog.key_input.setText('fake-test-key')
+        self.dialog.send_button.click()
+        error = DraftError('literal_numbers')
+        error.args = ('DO-NOT-DISPLAY-PROVIDER-TEXT',)
+        with patch('saga.desktop.ai_draft.parse_response', side_effect=error):
+            self.transport.succeeded.emit(b'PRIVATE-RESPONSE')
+        expected = safe_failure_message('literal_numbers') + ' No report was saved.'
+        self.assertEqual(self.dialog.status.text(), expected)
+        self.assertEqual(self.dialog.review.toPlainText(), expected)
+        self.assertNotIn('DO-NOT-DISPLAY', expected)
+        self.assertFalse(self.dialog.save_button.isEnabled())
+        self.assertIsNone(self.dialog._draft)
+
+    def test_safe_error_reasons_are_distinct_and_keep_key_out_of_status(self):
+        from saga.ai_errors import ERROR_MESSAGES
+
+        for reason, explanation in ERROR_MESSAGES.items():
+            with self.subTest(reason=reason):
+                self.dialog.key_input.setText('fake-test-key')
+                self.dialog.send_button.click()
+                self.transport.failed.emit(reason)
+                self.assertEqual(self.dialog.status.text(), explanation + ' No report was saved.')
+                self.assertNotIn('fake-test-key', self.dialog.status.text())
+                self.assertTrue(self.dialog.send_button.isEnabled())
+                self.assertFalse(self.dialog.save_button.isEnabled())
+        self.assertEqual(len(set(ERROR_MESSAGES.values())), len(ERROR_MESSAGES))
 
     def test_valid_draft_requires_explicit_save_and_keeps_keys_out_of_package(self):
         self.dialog.key_input.setText('fake-export-exclusion-key')

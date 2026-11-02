@@ -51,7 +51,9 @@ def narrative(preparation=None):
 class DraftProtocolTests(unittest.TestCase):
     def test_general_request_is_exact_bounded_non_network_payload(self):
         data = evidence()
+        original = copy.deepcopy(data)
         request = build_request(data)
+        self.assertEqual(data, original)
         self.assertEqual(API_URL, "https://api.openai.com/v1/responses")
         self.assertEqual(request["model"], DEFAULT_MODEL)
         self.assertIs(request["store"], False)
@@ -72,6 +74,23 @@ class DraftProtocolTests(unittest.TestCase):
         self.assertEqual(set(fmt["schema"]["required"]),
                          {"schema_version", "report_id", "sections"})
         self.assertFalse(fmt["schema"]["additionalProperties"])
+        schema = fmt["schema"]
+        self.assertEqual(schema["properties"]["schema_version"]["enum"], [1])
+        self.assertEqual(schema["properties"]["report_id"]["enum"], ["report-abc"])
+        sections = schema["properties"]["sections"]
+        self.assertEqual(sections["maxItems"], 20)
+        section = sections["items"]["properties"]
+        self.assertEqual(section["heading"]["pattern"], "^[^0-9]*$")
+        self.assertEqual(section["heading"]["maxLength"], 200)
+        paragraphs = section["paragraphs"]
+        self.assertEqual((paragraphs["minItems"], paragraphs["maxItems"]), (1, 20))
+        segments = paragraphs["items"]
+        self.assertEqual((segments["minItems"], segments["maxItems"]), (1, 50))
+        options = segments["items"]["anyOf"]
+        self.assertEqual(options[0]["properties"]["text"], {
+            "type": "string", "minLength": 1, "maxLength": 2000,
+            "pattern": "^[^0-9]*$"})
+        self.assertEqual(options[1]["properties"]["fact"]["enum"], ["fact-total"])
 
     def test_selected_request_only_exposes_selected_fields_and_fact_refs(self):
         data = evidence()
@@ -94,7 +113,50 @@ class DraftProtocolTests(unittest.TestCase):
                 serialized = json.dumps(request)
                 for secret in ("SECRET_NOTE", "UNSELECTED_SECRET", "completed_at"):
                     self.assertNotIn(secret, serialized)
-                self.assertIn("preparation_id", request["text"]["format"]["schema"]["required"])
+                schema = request["text"]["format"]["schema"]
+                self.assertEqual(schema["properties"]["preparation_id"]["enum"],
+                                 [prep["preparation_id"]])
+                options = (schema["properties"]["sections"]["items"]["properties"]
+                           ["paragraphs"]["items"]["items"]["anyOf"])
+                self.assertEqual(options[1]["properties"]["fact"]["enum"],
+                                 ["record-11-quantity"])
+
+    def test_unmeasured_selection_has_text_only_schema(self):
+        data = evidence()
+        data["records"][0]["measure"] = None
+        data["records"][0]["quantity"] = None
+        prep = build_preparation(data, "epb", [11])
+        schema = build_request(data, prep)["text"]["format"]["schema"]
+        segment = (schema["properties"]["sections"]["items"]["properties"]
+                   ["paragraphs"]["items"]["items"])
+        self.assertEqual(set(segment["properties"]), {"text"})
+        self.assertNotIn("anyOf", segment)
+        self.assertNotIn("enum", segment["properties"]["text"])
+
+    def test_schema_budget_rejects_enum_count_and_large_string_enum(self):
+        data = evidence()
+        prototype = data["facts"]["fact-total"]
+        data["facts"] = {f"fact-{index}": prototype for index in range(998)}
+        request = build_request(data)
+        allowed = (request["text"]["format"]["schema"]["properties"]["sections"]
+                   ["items"]["properties"]["paragraphs"]["items"]["items"]
+                   ["anyOf"][1]["properties"]["fact"]["enum"])
+        self.assertEqual(len(allowed), 998)
+        data["facts"] = {f"fact-{index}": prototype for index in range(999)}
+        with self.assertRaises(DraftError) as caught:
+            build_request(data)
+        self.assertEqual(caught.exception.reason, "draft_size")
+        data = evidence()
+        data["report_id"] = "r" * 120_000
+        with self.assertRaises(DraftError) as caught:
+            build_request(data)
+        self.assertEqual(caught.exception.reason, "draft_size")
+        data = evidence()
+        data["facts"] = {f"fact-{index}-" + "x" * 54: prototype
+                         for index in range(251)}
+        with self.assertRaises(DraftError) as caught:
+            build_request(data)
+        self.assertEqual(caught.exception.reason, "draft_size")
 
     def test_request_rejects_stale_preparation_bad_model_and_oversize(self):
         data = evidence()
@@ -123,8 +185,19 @@ class DraftProtocolTests(unittest.TestCase):
         data = evidence()
         prep = build_preparation(data, "cv", [11])
         # The offline renderer accepts this fact, but the AI never received it.
-        with self.assertRaises(DraftError):
+        with self.assertRaises(DraftError) as caught:
             parse_response(response(narrative(prep)), data, prep)
+        self.assertEqual(caught.exception.reason, "unknown_fact")
+
+    def test_reasoning_metadata_with_one_text_message_is_accepted(self):
+        data = evidence()
+        wrapped = json.loads(response(narrative()))
+        wrapped["output"].insert(0, {"type": "reasoning", "summary": []})
+        self.assertEqual(parse_response(json.dumps(wrapped).encode(), data), narrative())
+        wrapped["output"].insert(0, {"type": "function_call", "name": "unsafe"})
+        with self.assertRaises(DraftError) as caught:
+            parse_response(json.dumps(wrapped).encode(), data)
+        self.assertEqual(caught.exception.reason, "response_shape")
 
     def test_response_rejects_status_refusal_tools_shape_and_oversize(self):
         data = evidence()
@@ -159,9 +232,45 @@ class DraftProtocolTests(unittest.TestCase):
         digits = narrative()
         digits["sections"][0]["paragraphs"][0][0] = {"text": "Saved 42 widgets"}
         cases.append((digits, None))
-        for draft, selected in cases:
-            with self.subTest(draft=draft), self.assertRaises(DraftError):
+        expected = ("report_mismatch", "selection_mismatch", "unknown_fact",
+                    "literal_numbers")
+        for (draft, selected), reason in zip(cases, expected, strict=True):
+            with self.subTest(draft=draft), self.assertRaises(DraftError) as caught:
                 parse_response(response(draft), data, selected)
+            self.assertEqual(caught.exception.reason, reason)
+
+    def test_unicode_digits_remain_blocked_by_local_validator(self):
+        data = evidence()
+        for digit in ("٤", "４", "²"):
+            with self.subTest(digit=digit):
+                draft = narrative()
+                draft["sections"][0]["paragraphs"][0][0] = {
+                    "text": f"Recorded {digit} widgets"}
+                with self.assertRaises(DraftError) as caught:
+                    parse_response(response(draft), data)
+                self.assertEqual(caught.exception.reason, "literal_numbers")
+
+    def test_rejection_reasons_are_fixed_and_do_not_echo_provider_text(self):
+        data = evidence()
+        secret = "PROVIDER_SECRET_SENTINEL"
+        cases = [
+            (response(narrative(), status="incomplete"), "draft_incomplete"),
+            (json.dumps({"status": "completed", "output": [{"type": "message",
+                "role": "assistant", "status": "incomplete", "content": []}]}).encode(),
+             "draft_incomplete"),
+            (json.dumps({"status": "completed", "output": [{"type": "message",
+                "role": "assistant", "status": "completed", "content": [{
+                    "type": "refusal", "refusal": secret}]}]}).encode(), "refused"),
+            (json.dumps({"status": "completed", "output": [{"type": "message",
+                "role": "assistant", "status": "completed", "content": [{
+                    "type": "output_text", "text": secret}]}]}).encode(), "invalid_json"),
+            (b"x" * (MAX_RESPONSE_BYTES + 1), "draft_size"),
+        ]
+        for raw, reason in cases:
+            with self.subTest(reason=reason), self.assertRaises(DraftError) as caught:
+                parse_response(raw, data)
+            self.assertEqual(caught.exception.reason, reason)
+            self.assertNotIn(secret, str(caught.exception))
 
 
 if __name__ == "__main__":

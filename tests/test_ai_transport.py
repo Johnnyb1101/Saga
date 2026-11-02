@@ -10,7 +10,7 @@ HAS_QT = find_spec("PySide6") is not None
 
 if HAS_QT:
     from PySide6.QtCore import QCoreApplication, QEvent
-    from PySide6.QtNetwork import QNetworkRequest
+    from PySide6.QtNetwork import QNetworkReply, QNetworkRequest
     from PySide6.QtWidgets import QApplication
 
     from saga.ai_drafting import API_URL, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
@@ -38,7 +38,7 @@ if HAS_QT:
             self.sslErrors = FakeSignal()
             self.pending = bytearray()
             self.status = 200
-            self.network_error = 0
+            self.network_error = QNetworkReply.NetworkError.NoError
             self.aborted = False
             self.read_buffer_size = None
             self.deleted_later = False
@@ -128,6 +128,34 @@ class AITransportTests(unittest.TestCase):
         self.assertEqual(self.successes, [b'{"ok":true}'])
         self.assertEqual(self.failures, [])
 
+    def test_qt_no_error_is_truthy_but_successful_http_response_succeeds(self):
+        self.assertTrue(QNetworkReply.NetworkError.NoError)
+        for status, body in ((200, b'{"ok":true}'), (204, b""), (299, b"done")):
+            with self.subTest(status=status):
+                reply = self.start()
+                reply.status = status
+                self.assertIs(reply.error(), QNetworkReply.NetworkError.NoError)
+                reply.receive(body)
+                reply.finished.emit()
+                self.assertEqual(self.successes[-1], body)
+                self.assertEqual(self.failures, [])
+
+    def test_missing_http_status_with_no_network_error_is_unknown(self):
+        reply = self.start()
+        reply.status = None
+        reply.receive(b"provider secret")
+        reply.finished.emit()
+        self.assertEqual(self.failures, ["unknown"])
+        self.assertEqual(self.successes, [])
+
+    def test_http_failure_takes_precedence_over_network_error(self):
+        reply = self.start()
+        reply.status = 401
+        reply.network_error = QNetworkReply.NetworkError.HostNotFoundError
+        reply.finished.emit()
+        self.assertEqual(self.failures, ["authentication"])
+        self.assertEqual(self.successes, [])
+
     def test_rejects_invalid_credentials_and_oversized_or_invalid_payload(self):
         for key in ("", "a\nb", 'sk-"quote', "nonascii-\N{SNOWMAN}", "x" * 2561):
             with self.subTest(key_length=len(key)), self.assertRaises(ValueError):
@@ -162,7 +190,7 @@ class AITransportTests(unittest.TestCase):
         self.assertFalse(reply.aborted)
         reply.receive(b"x")
         self.assertTrue(reply.aborted)
-        self.assertEqual(self.failures, ["The response is too large."])
+        self.assertEqual(self.failures, ["too_large"])
         self.assertEqual(self.successes, [])
 
     def test_timeout_aborts_once(self):
@@ -170,16 +198,21 @@ class AITransportTests(unittest.TestCase):
         self.transport._on_timeout()
         self.transport._on_timeout()
         self.assertTrue(reply.aborted)
-        self.assertEqual(self.failures, ["The request timed out."])
+        self.assertEqual(self.failures, ["timeout"])
 
     def test_http_redirect_and_server_error_are_sanitized(self):
-        for status in (301, 307, 401, 429, 500):
+        for status, reason in ((301, "redirect"), (307, "redirect"),
+                               (400, "rejected"), (401, "authentication"),
+                               (403, "permission"), (404, "model"),
+                               (422, "rejected"), (429, "rate_limit"),
+                               (500, "service"), (503, "service"),
+                               (418, "unknown")):
             with self.subTest(status=status):
                 reply = self.start()
                 reply.status = status
                 reply.receive(b"secret server text")
                 reply.finished.emit()
-                self.assertEqual(self.failures[-1], f"The service returned HTTP {status}.")
+                self.assertEqual(self.failures[-1], reason)
                 self.assertNotIn("secret", self.failures[-1])
         self.assertEqual(self.successes, [])
 
@@ -187,13 +220,45 @@ class AITransportTests(unittest.TestCase):
         reply = self.start()
         reply.sslErrors.emit([])
         self.assertTrue(reply.aborted)
-        self.assertEqual(self.failures, ["Secure connection failed."])
-        reply = self.start()
-        reply.network_error = 1
-        reply.status = None
-        reply.finished.emit()
-        self.assertEqual(self.failures[-1], "The request failed.")
+        self.assertEqual(self.failures, ["tls"])
+        for network_error, reason in (
+            (QNetworkReply.HostNotFoundError, "dns"),
+            (QNetworkReply.ProxyNotFoundError, "dns"),
+            (QNetworkReply.SslHandshakeFailedError, "tls"),
+            (QNetworkReply.TimeoutError, "timeout"),
+            (QNetworkReply.ConnectionRefusedError, "connection"),
+        ):
+            with self.subTest(network_error=network_error):
+                reply = self.start()
+                reply.network_error = network_error
+                reply.status = None
+                reply.finished.emit()
+                self.assertEqual(self.failures[-1], reason)
         self.assertEqual(self.successes, [])
+
+    def test_429_quota_allowlist_ignores_provider_text_and_unrecognized_codes(self):
+        for code in ("insufficient_quota", "credit_balance_exhausted",
+                     "billing_hard_limit_reached", "organization_spend_limit_exceeded",
+                     "project_spend_limit_exceeded", "organization_usage_limit_exceeded"):
+            with self.subTest(code=code):
+                reply = self.start()
+                reply.status = 429
+                reply.receive(json.dumps({"error": {"type": code,
+                                                   "message": "sk-forged-secret"}}).encode())
+                reply.finished.emit()
+                self.assertEqual(self.failures[-1], "quota")
+        for body in (b'{"error":{"code":"made_up","message":"sk-forged-secret"}}',
+                     b'{"error":{"message":"insufficient_quota sk-forged-secret"}}',
+                     b'{"error":{"code":429,"type":null}}',
+                     b'invalid-json',
+                     b'[' * 300 + b'0' + b']' * 300):
+            with self.subTest(body=body[:30]):
+                reply = self.start()
+                reply.status = 429
+                reply.receive(body)
+                reply.finished.emit()
+                self.assertEqual(self.failures[-1], "rate_limit")
+                self.assertNotIn("sk-forged-secret", self.failures[-1])
 
 
 if __name__ == "__main__":

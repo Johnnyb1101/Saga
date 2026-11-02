@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from report_bundle import publish_snapshot
 from saga.ai_drafting import DEFAULT_MODEL, DraftError, build_request, parse_response
+from saga.ai_errors import safe_failure_message
 from saga.credentials import CredentialError, CredentialStore
 from saga.desktop.ai_transport import OpenAIRequest
 from saga.report_html import render_html
@@ -177,10 +178,10 @@ class AIDraftDialog(QDialog):
         evidence, preparation = self._snapshot.unpack()
         try:
             self._request = build_request(evidence, preparation, self.model.text())
-        except (DraftError, ValueError):
+        except (DraftError, ValueError) as exc:
             self._request = None
             self.preview.clear()
-            self.status.setText('Could not prepare this request. Check the model or choose fewer accomplishments.')
+            self.status.setText(safe_failure_message(getattr(exc, 'reason', 'draft_structure')))
         else:
             self.preview.setPlainText(json.dumps(self._request, ensure_ascii=False, indent=2))
             self.status.setText('Review the Data to send tab before sending. No request has been made.')
@@ -232,8 +233,11 @@ class AIDraftDialog(QDialog):
         try:
             draft = parse_response(raw, evidence, preparation)
             html = render_html(evidence, draft, preparation)
-        except (DraftError, ValueError):
-            self.status.setText('OpenAI returned an unusable draft. No report was saved. You may try again explicitly.')
+        except (DraftError, ValueError) as exc:
+            explanation = safe_failure_message(getattr(exc, 'reason', 'draft_structure')) + ' No report was saved.'
+            self.status.setText(explanation)
+            self.review.setPlainText(explanation)
+            self.tabs.setCurrentIndex(1)
             return
         self._draft = draft
         self.review.setHtml(html)
@@ -246,7 +250,7 @@ class AIDraftDialog(QDialog):
             return
         self._set_busy(False)
         # Do not render arbitrary provider error strings, even from an injected transport.
-        self.status.setText('OpenAI request failed. Check your connection, key, model access, or usage limits. No report was saved.')
+        self.status.setText(safe_failure_message(message) + ' No report was saved.')
 
     def _cancel(self):
         self._set_busy(False)
